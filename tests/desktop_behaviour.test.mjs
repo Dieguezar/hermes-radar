@@ -41,6 +41,7 @@ const exported = [
   'interruptSession',
   'activityFor',
   'SessionRow',
+  'StateGlyph',
   'RadarPane',
   'Avatar',
   'avatarFor',
@@ -94,6 +95,19 @@ function strings(node) {
   return walk(node)
     .map(item => item.props && item.props.children)
     .filter(value => typeof value === 'string')
+}
+
+/** Concatenate every string in the tree, in render order (arrays included). */
+function plainText(node, out = '') {
+  if (Array.isArray(node)) {
+    for (const child of node) out = plainText(child, out)
+    return out
+  }
+  if (typeof node === 'string') return out + node
+  if (!node || typeof node !== 'object') return out
+  const children = node.props && node.props.children
+  if (children !== undefined) out = plainText(children, out)
+  return out
 }
 
 const tests = []
@@ -447,6 +461,128 @@ test('the row badge shows profile_title instead of the slug', () => {
   const text = strings(tree)
   assert.ok(text.includes('Maca'), JSON.stringify(text))
   assert.equal(text.includes('maca'), false, JSON.stringify(text))
+})
+
+// ---------------------------------------------------------------------------
+// 23. Terminal sessions are listed, dimmed and never stoppable
+// ---------------------------------------------------------------------------
+
+test('a done row is listed after every active state and has no stop control', () => {
+  const snapshot = {
+    generated_at: NOW_S - 1,
+    profiles: ['default'],
+    window_s: 180,
+    sessions: [
+      freshRow({ id: 'f', state: 'failed', can_interrupt: false }),
+      freshRow({ id: 'd', state: 'done', can_interrupt: false }),
+      freshRow({ id: 'i', state: 'idle' }),
+      freshRow({ id: 'r', state: 'running' })
+    ],
+    totals: {
+      running: 1,
+      queued: 0,
+      stalled: 0,
+      idle: 1,
+      done: 1,
+      failed: 1,
+      live: 1,
+      dormant: 0,
+      sessions: 4
+    }
+  }
+  globalThis.__SP_STATE__ = [snapshot, false, {}]
+  const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
+
+  const rows = walk(tree).filter(node => node.type === mod.SessionRow)
+  assert.deepEqual(
+    rows.map(node => node.props.session.state),
+    ['running', 'idle', 'done', 'failed']
+  )
+})
+
+test('a completed row is dimmed and drops the stop even if the backend said otherwise', () => {
+  globalThis.__SP_STATE__ = []
+  const tree = mod.SessionRow({
+    session: freshRow({ state: 'done', can_interrupt: true }),
+    now: NOW_MS,
+    stop: undefined,
+    onOpen: () => {},
+    onStop: () => {}
+  })
+  const nodes = walk(tree)
+
+  assert.equal(tree.props.style.opacity, 0.72)
+  assert.equal(
+    nodes.some(node => node.props && node.props.className === 'sp-stop'),
+    false,
+    'a finished session must not offer a stop'
+  )
+  const glyphNode = nodes.find(node => node.type === mod.StateGlyph)
+  assert.ok(glyphNode, 'the row must paint a state glyph')
+  assert.equal(glyphNode.props.state, 'done')
+  const glyph = mod.StateGlyph({ state: 'done' })
+  assert.equal(glyph.props['aria-label'], 'terminada')
+  assert.match(glyph.props.style.color, /3fb950/i)
+})
+
+test('a failed row is dimmed, red-tinted and has no stop control', () => {
+  globalThis.__SP_STATE__ = []
+  const tree = mod.SessionRow({
+    session: freshRow({ state: 'failed', can_interrupt: false }),
+    now: NOW_MS,
+    stop: undefined,
+    onOpen: () => {},
+    onStop: () => {}
+  })
+  const nodes = walk(tree)
+
+  assert.equal(tree.props.style.opacity, 0.72)
+  assert.equal(
+    nodes.some(node => node.props && node.props.className === 'sp-stop'),
+    false
+  )
+  const glyphNode = nodes.find(node => node.type === mod.StateGlyph)
+  assert.ok(glyphNode, 'the row must paint a state glyph')
+  assert.equal(glyphNode.props.state, 'failed')
+  const glyph = mod.StateGlyph({ state: 'failed' })
+  assert.equal(glyph.props['aria-label'], 'fallida')
+  assert.match(glyph.props.style.color, /f85149|destructive/i)
+})
+
+test('an active row keeps full opacity and its stop control', () => {
+  globalThis.__SP_STATE__ = []
+  const tree = mod.SessionRow({
+    session: freshRow({ state: 'running' }),
+    now: NOW_MS,
+    stop: undefined,
+    onOpen: () => {},
+    onStop: () => {}
+  })
+  assert.equal(tree.props.style.opacity, undefined)
+  assert.ok(walk(tree).some(node => node.props && node.props.className === 'sp-stop'))
+})
+
+test('the footer reads live, then finished, then dormant', () => {
+  const snapshot = {
+    generated_at: NOW_S - 1,
+    profiles: ['default'],
+    window_s: 180,
+    sessions: [freshRow(), freshRow({ id: 'd', state: 'done', can_interrupt: false })],
+    totals: {
+      running: 1,
+      queued: 0,
+      stalled: 0,
+      idle: 0,
+      done: 1,
+      failed: 0,
+      live: 2,
+      dormant: 3,
+      sessions: 2
+    }
+  }
+  globalThis.__SP_STATE__ = [snapshot, false, {}]
+  const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
+  assert.match(plainText(tree), /2 live · 1 terminadas · 3 inactivas/)
 })
 
 // ---------------------------------------------------------------------------

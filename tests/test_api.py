@@ -1399,7 +1399,9 @@ def test_plugin_identity_is_radar() -> None:
     yaml_text = (ROOT / "plugin.yaml").read_text(encoding="utf-8")
     assert "name: radar" in yaml_text, yaml_text
     assert "hermes-radar" in yaml_text, yaml_text
-    assert "version: 0.4.0" in yaml_text, yaml_text
+    # Both manifests must ship the same version; the assertion reads the JSON one
+    # so a release bump cannot leave this test pinned to an old number.
+    assert "version: " + manifest["version"] in yaml_text, yaml_text
 
     html = _view_html()
     assert "<title>Radar</title>" in html, "the /view document title must be Radar"

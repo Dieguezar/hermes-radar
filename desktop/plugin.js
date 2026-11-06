@@ -26,7 +26,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'radar'
 const PLUGIN_NAME = 'Radar'
-const VERSION = '0.4.0'
+const VERSION = '0.4.2'
 
 const LIVE_PATH = '/live?profiles=all&window=180'
 const REFRESH_MS = 2000
@@ -59,9 +59,14 @@ const GREEN = 'color-mix(in srgb, ' + FG + ' 45%, ' + GREEN_HUE + ')'
 const SANS = 'var(--dt-font-sans, system-ui, -apple-system, "Segoe UI", sans-serif)'
 const MONO = 'var(--dt-font-mono, ui-monospace, "Cascadia Code", "DejaVu Sans Mono", monospace)'
 
-/** Panel order. `dormant` is never rendered, and terminal rows are not listed. */
-const STATE_ORDER = { running: 0, stalled: 1, queued: 2, idle: 3 }
-const LISTED_STATES = ['running', 'stalled', 'queued', 'idle']
+/**
+ * Panel order, mirroring the backend's `_STATE_ORDER`. Terminal rows are listed
+ * (dimmed, never stoppable) so the panel shows what just finished, not only what
+ * is still moving. `dormant` stays out: it is history, not a live warning.
+ */
+const STATE_ORDER = { running: 0, stalled: 1, queued: 2, idle: 3, done: 4, failed: 5 }
+const LISTED_STATES = ['running', 'stalled', 'queued', 'idle', 'done', 'failed']
+const TERMINAL_STATES = ['done', 'failed']
 
 const ANIMATION_CSS =
   '@keyframes sp-blink{0%,60%,100%{opacity:.25}30%{opacity:1}}' +
@@ -328,7 +333,11 @@ function StateGlyph({ state }) {
       ? { glyph: '!', color: DESTRUCTIVE, label: 'colgada' }
       : state === 'queued'
         ? { glyph: '◷', color: AMBER, label: 'en cola' }
-        : { glyph: '●', color: DOT, label: 'ociosa' }
+        : state === 'done'
+          ? { glyph: '✓', color: GREEN, label: 'terminada' }
+          : state === 'failed'
+            ? { glyph: '✕', color: DESTRUCTIVE, label: 'fallida' }
+            : { glyph: '●', color: DOT, label: 'ociosa' }
 
   return jsx('span', {
     'aria-label': meta.label,
@@ -438,12 +447,15 @@ function activityFor(session, now = Date.now()) {
 function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
   const [hovered, setHovered] = useState(false)
   const stalled = session.state === 'stalled'
+  const terminal = TERMINAL_STATES.includes(session.state)
   const confirming = stop && stop.phase === 'confirm' && stop.until > now
   const sending = stop && stop.phase === 'sending'
-  const done = stop && stop.phase === 'done' && stop.until > now
-  const failed = stop && stop.phase === 'error'
+  const stopDone = stop && stop.phase === 'done' && stop.until > now
+  const stopFailed = stop && stop.phase === 'error'
   const activity = activityFor(session, now)
-  const canStop = Boolean(session.can_interrupt)
+  // Terminal rows keep the layout but drop the stop control: the turn already
+  // ended, and offering a stop there would be a dead button.
+  const canStop = Boolean(session.can_interrupt) && !terminal
 
   const base = stalled ? 'color-mix(in srgb, ' + DESTRUCTIVE + ' 9%, transparent)' : 'transparent'
   const background = !hovered
@@ -466,6 +478,9 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
       padding: '6px',
       borderRadius: '7px',
       background,
+      // Terminal rows stay readable but recede: they must not compete with a
+      // running or stalled session.
+      opacity: terminal ? 0.72 : undefined,
       boxShadow: stalled
         ? 'inset 0 0 0 1px color-mix(in srgb, ' + DESTRUCTIVE + ' 34%, transparent)'
         : 'none'
@@ -530,7 +545,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
                   })
                 ]
               }),
-              failed
+              stopFailed
                 ? jsx('div', {
                     style: {
                       marginTop: '2px',
@@ -543,7 +558,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
                     },
                     children: stop.message
                   })
-                : done
+                : stopDone
                   ? jsx('div', {
                       style: { marginTop: '2px', fontFamily: MONO, fontSize: '9px', color: GREEN },
                       children: 'interrumpida'
@@ -710,9 +725,9 @@ function RadarPane({ ctx }) {
     )
 
   const age = data.generated_at ? Math.max(0, Math.floor(now / 1000) - Number(data.generated_at)) : 0
-  const sessionCount = rows.length
   const liveCount = totals.live || 0
   const dormant = totals.dormant || 0
+  const finishedCount = rows.filter(session => TERMINAL_STATES.includes(session.state)).length
   const profileErrors = Object.keys(data.profile_errors || {})
 
   return jsxs('div', {
@@ -758,7 +773,7 @@ function RadarPane({ ctx }) {
               padding: '10px'
             },
             children: [
-              jsx('span', { style: { fontSize: '11.5px', fontWeight: 600 }, children: 'Ninguna sesión activa' }),
+              jsx('span', { style: { fontSize: '11.5px', fontWeight: 600 }, children: 'Ninguna sesión en la ventana' }),
               jsx('span', {
                 style: { fontFamily: MONO, fontSize: '9.5px', color: MUTED },
                 children: dormant + ' inactivas'
@@ -781,8 +796,6 @@ function RadarPane({ ctx }) {
         children: [
           jsxs('span', {
             children: [
-              jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(sessionCount) }),
-              ' sesiones · ',
               jsx('span', {
                 'aria-hidden': true,
                 style: {
@@ -796,7 +809,26 @@ function RadarPane({ ctx }) {
                 }
               }),
               jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(liveCount) }),
-              ' live'
+              ' live',
+              // Only when it adds information: an all-live panel keeps one number.
+              finishedCount
+                ? jsxs('span', {
+                    children: [
+                      ' · ',
+                      jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(finishedCount) }),
+                      ' terminadas'
+                    ]
+                  })
+                : null,
+              dormant
+                ? jsxs('span', {
+                    children: [
+                      ' · ',
+                      jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(dormant) }),
+                      ' inactivas'
+                    ]
+                  })
+                : null
             ]
           }),
           profileErrors.length

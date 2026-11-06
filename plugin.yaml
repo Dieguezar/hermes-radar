@@ -1,6 +1,6 @@
 manifest_version: 1
 name: radar
-version: 0.4.1
+version: 0.4.2
 description: >-
   Radar — live panel of every Hermes session across all profiles: state, current
   tool, elapsed time and a two-step stop for a hung turn. Each profile's
