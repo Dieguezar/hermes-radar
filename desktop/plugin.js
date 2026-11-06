@@ -26,7 +26,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'radar'
 const PLUGIN_NAME = 'Radar'
-const VERSION = '0.4.2'
+const VERSION = '0.6.0'
 
 const LIVE_PATH = '/live?profiles=all&window=180'
 const REFRESH_MS = 2000
@@ -59,6 +59,233 @@ const GREEN = 'color-mix(in srgb, ' + FG + ' 45%, ' + GREEN_HUE + ')'
 const SANS = 'var(--dt-font-sans, system-ui, -apple-system, "Segoe UI", sans-serif)'
 const MONO = 'var(--dt-font-mono, ui-monospace, "Cascadia Code", "DejaVu Sans Mono", monospace)'
 
+// ---------------------------------------------------------------------------
+// Settings (persisted through the host's plugin storage)
+// ---------------------------------------------------------------------------
+
+// The host namespaces these under `hermes.plugin.radar.`, so the literal keys
+// stay `radar.*` on both the real SDK and the fallback.
+const SETTING_KEYS = {
+  filter: 'radar.filter',
+  profiles: 'radar.profiles',
+  window: 'radar.window',
+  finished: 'radar.finished',
+  density: 'radar.density',
+  size: 'radar.size'
+}
+
+const DEFAULT_SETTINGS = {
+  filter: 'all',
+  profiles: 'all',
+  window: 180,
+  finished: true,
+  density: 'comfortable'
+}
+
+const WINDOW_CHOICES = [60, 180, 600]
+
+// Floating pane sizes. There is no free resize in the Desktop, but the pane
+// registry replaces a contribution by id, so registering `radar` again with
+// another `width`/`height` resizes it without remounting the body (the floating
+// key is `source:id`, which does not change).
+const PANE_SIZES = {
+  s: { width: '320px', height: '214px' },
+  m: { width: '420px', height: '300px' },
+  l: { width: '520px', height: '380px' },
+  xl: { width: '620px', height: '460px' }
+}
+const SIZE_ORDER = ['s', 'm', 'l', 'xl']
+// The registration id inside this plugin; the host scopes it to `radar:panel`
+// as the tree/contribution id (`${PLUGIN_ID}:${PANEL_PANE_ID}`).
+const PANEL_PANE_ID = 'radar:panel'
+const PANEL_PANE_TARGET = PLUGIN_ID + ':' + PANEL_PANE_ID
+let floatingPaneDispose = null
+const MEMORY_SETTINGS = new Map()
+const MEMORY_STORAGE = {
+  get: (key, fallback) => (MEMORY_SETTINGS.has(key) ? MEMORY_SETTINGS.get(key) : fallback),
+  set: (key, value) => {
+    MEMORY_SETTINGS.set(key, value)
+  },
+  remove: key => {
+    MEMORY_SETTINGS.delete(key)
+  }
+}
+
+/**
+ * The verified SDK surface is `ctx.storage` (`get/set/remove`). `host.storage`
+ * never existed, but an older host may still expose one, so both are probed
+ * before the in-memory fallback keeps the panel usable.
+ */
+function storageFor(ctx) {
+  if (ctx && ctx.storage && typeof ctx.storage.get === 'function') return ctx.storage
+  if (typeof host !== 'undefined' && host && host.storage && typeof host.storage.get === 'function') {
+    return host.storage
+  }
+  return MEMORY_STORAGE
+}
+
+async function readSetting(ctx, key, fallback) {
+  try {
+    const value = await storageFor(ctx).get(key, fallback)
+    return value === undefined || value === null ? fallback : value
+  } catch (_error) {
+    return fallback
+  }
+}
+
+async function writeSetting(ctx, key, value) {
+  try {
+    await storageFor(ctx).set(key, value)
+  } catch (_error) {
+    // Storage is a convenience: a host that refuses it must not break the panel.
+  }
+  return value
+}
+
+/** Normalise any stored value to one of the four known size keys. */
+function paneSize(value) {
+  const key = String(value === undefined || value === null ? '' : value).toLowerCase()
+  return PANE_SIZES[key] ? key : 's'
+}
+
+/**
+ * Read the remembered size synchronously so the very first registration can
+ * use it. The real `ctx.storage.get` is synchronous; a host that answers with a
+ * promise leaves us at `s` for this registration and the async settings path
+ * would pick it up on a later mount.
+ */
+function storedSize(ctx) {
+  try {
+    const value = storageFor(ctx).get(SETTING_KEYS.size, 's')
+    return typeof value === 'string' ? paneSize(value) : 's'
+  } catch (_error) {
+    return 's'
+  }
+}
+
+/**
+ * Register (or re-register) the floating quick view at one of the four sizes.
+ * Re-registration by id is the only resize the Desktop offers: the previous
+ * contribution is disposed and the same id is registered again, which keeps the
+ * component mounted under its stable `source:id` key.
+ */
+function registerRadarPane(ctx, sizeKey) {
+  const key = paneSize(sizeKey)
+  const size = PANE_SIZES[key]
+
+  if (typeof floatingPaneDispose === 'function') {
+    try {
+      floatingPaneDispose()
+    } catch (_error) {
+      // A host that already dropped the entry must not block the new size.
+    }
+  }
+
+  floatingPaneDispose = ctx.register({
+    id: 'radar',
+    area: 'panes',
+    title: 'Radar',
+    data: {
+      placement: 'floating',
+      anchor: 'bottom-right',
+      width: size.width,
+      height: size.height
+    },
+    render: () => jsx(RadarPane, { ctx })
+  })
+
+  return size
+}
+
+/** Bring the full side panel to the front, when the host exposes revealPane. */
+function expandRadarPanel() {
+  if (typeof host.revealPane === 'function') host.revealPane(PANEL_PANE_TARGET)
+}
+
+function livePathFor(settings) {
+  const source = settings && typeof settings === 'object' ? settings : {}
+  const profiles = source.profiles === 'current' ? 'current' : 'all'
+  const window = WINDOW_CHOICES.includes(Number(source.window)) ? Number(source.window) : 180
+  return '/live?profiles=' + profiles + '&window=' + window
+}
+
+const PANEL_GROUPS = [
+  { key: 'working', label: 'Trabajando', states: ['running', 'queued'] },
+  { key: 'waiting', label: 'Esperando', states: ['idle'] },
+  { key: 'stalled', label: 'Colgadas', states: ['stalled'] },
+  { key: 'finished', label: 'Terminadas', states: ['done', 'failed'] }
+]
+
+const PANEL_FILTERS = [
+  { key: 'all', label: 'Todas' },
+  { key: 'working', label: 'Trabajando' },
+  { key: 'waiting', label: 'Esperan' },
+  { key: 'problem', label: 'Problema' }
+]
+
+/** Group rows for the side panel; terminal rows obey the `finished` setting. */
+function panelGroups(sessions, settings) {
+  const list = Array.isArray(sessions) ? sessions : []
+  const source = settings && typeof settings === 'object' ? settings : {}
+  const showFinished = source.finished !== false
+  // Every configured group keeps its header and count, even at zero: the panel
+  // is a map of the whole session state, not only the non-empty slice.
+  return PANEL_GROUPS.filter(def => showFinished || def.key !== 'finished').map(def => ({
+    key: def.key,
+    label: def.label,
+    states: def.states,
+    items: list.filter(session => def.states.includes(session.state))
+  }))
+}
+
+function sessionsForFilter(sessions, filter) {
+  const list = Array.isArray(sessions) ? sessions : []
+  if (filter === 'working') {
+    return list.filter(session => session.state === 'running' || session.state === 'queued')
+  }
+  if (filter === 'waiting') return list.filter(session => session.state === 'idle')
+  if (filter === 'problem') {
+    return list.filter(session => session.state === 'stalled' || session.state === 'failed')
+  }
+  return list
+}
+
+/** Copy the session id through the Desktop clipboard, with guarded fallbacks. */
+async function copySessionId(ctx, session) {
+  const text = String((session && session.id) || '')
+  if (!text) return false
+
+  if (
+    typeof navigator !== 'undefined' &&
+    navigator.clipboard &&
+    typeof navigator.clipboard.writeText === 'function'
+  ) {
+    try {
+      await navigator.clipboard.writeText(text)
+      return true
+    } catch (_error) {
+      // A webview may expose the API and still deny permission: fall through.
+    }
+  }
+  if (ctx && ctx.os && typeof ctx.os.writeClipboard === 'function') {
+    try {
+      await ctx.os.writeClipboard(text)
+      return true
+    } catch (_error) {
+      // Try the host-level fallback below.
+    }
+  }
+  if (typeof host !== 'undefined' && host && host.os && typeof host.os.writeClipboard === 'function') {
+    try {
+      await host.os.writeClipboard(text)
+      return true
+    } catch (_error) {
+      return false
+    }
+  }
+  return false
+}
+
 /**
  * Panel order, mirroring the backend's `_STATE_ORDER`. Terminal rows are listed
  * (dimmed, never stoppable) so the panel shows what just finished, not only what
@@ -77,11 +304,16 @@ const ANIMATION_CSS =
   // of the tab order.
   '.sp-row:hover .sp-stop,.sp-row:focus-within .sp-stop,.sp-stop:focus-visible{opacity:1;pointer-events:auto}' +
   '.sp-stop{opacity:0;pointer-events:none;transition:opacity .12s ease}' +
+  // The full panel has room for the actions: keep stop/copy always visible
+  // there, while the narrow floating card reveals stop only on hover/focus.
+  '.sp-panel-row .sp-stop{opacity:1;pointer-events:auto}' +
   '.sp-stop:focus-visible{outline:2px solid ' + ORANGE + ';outline-offset:1px}' +
   '.sp-open{appearance:none;background:transparent;border:0;padding:0;margin:0;' +
   'color:inherit;font:inherit;text-align:left;cursor:pointer;min-width:0;' +
   'display:flex;align-items:center;gap:9px;flex:1}' +
-  '.sp-open:focus-visible{outline:2px solid ' + ORANGE + ';outline-offset:-2px;border-radius:6px}'
+  '.sp-open:focus-visible{outline:2px solid ' + ORANGE + ';outline-offset:-2px;border-radius:6px}' +
+  '.sp-size:not(.sp-size-on):hover,.sp-expand:hover{border-color:' + MUTED + '!important}' +
+  '.sp-size:focus-visible,.sp-expand:focus-visible{outline:2px solid ' + ORANGE + ';outline-offset:1px}'
 
 const AVATARS = [
   {
@@ -270,10 +502,12 @@ async function sessionRpc(session, method, params) {
  * running/stalled, or advanced to a different generation. There is no
  * `stale_generation` retry to wait for, because the handler never returns it.
  */
-async function interruptSession(ctx, session) {
+async function interruptSession(ctx, session, livePath = LIVE_PATH) {
   let fresh
   try {
-    fresh = await ctx.rest(LIVE_PATH)
+    // The panel re-reads with its CURRENT profiles/window query; the floating
+    // quick view keeps the all/180 default it has always used.
+    fresh = await ctx.rest(livePath)
   } catch (error) {
     throw new Error('no se pudo confirmar el turno: ' + messageOf(error))
   }
@@ -337,7 +571,7 @@ function StateGlyph({ state }) {
           ? { glyph: '✓', color: GREEN, label: 'terminada' }
           : state === 'failed'
             ? { glyph: '✕', color: DESTRUCTIVE, label: 'fallida' }
-            : { glyph: '●', color: DOT, label: 'ociosa' }
+            : { glyph: '●', color: DOT, label: 'espera' }
 
   return jsx('span', {
     'aria-label': meta.label,
@@ -447,6 +681,8 @@ function activityFor(session, now = Date.now()) {
 function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
   const [hovered, setHovered] = useState(false)
   const stalled = session.state === 'stalled'
+  // F8: the turn ended and the user is awaited. Amber, never grey.
+  const waiting = session.state === 'idle'
   const terminal = TERMINAL_STATES.includes(session.state)
   const confirming = stop && stop.phase === 'confirm' && stop.until > now
   const sending = stop && stop.phase === 'sending'
@@ -457,12 +693,18 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
   // ended, and offering a stop there would be a dead button.
   const canStop = Boolean(session.can_interrupt) && !terminal
 
-  const base = stalled ? 'color-mix(in srgb, ' + DESTRUCTIVE + ' 9%, transparent)' : 'transparent'
+  const base = stalled
+    ? 'color-mix(in srgb, ' + DESTRUCTIVE + ' 9%, transparent)'
+    : waiting
+      ? 'color-mix(in srgb, ' + AMBER + ' 10%, transparent)'
+      : 'transparent'
   const background = !hovered
     ? base
     : stalled
       ? 'color-mix(in srgb, ' + DESTRUCTIVE + ' 15%, transparent)'
-      : 'color-mix(in srgb, ' + FG + ' 7%, transparent)'
+      : waiting
+        ? 'color-mix(in srgb, ' + AMBER + ' 18%, transparent)'
+        : 'color-mix(in srgb, ' + FG + ' 7%, transparent)'
 
   const stopLabel = sending ? '…' : confirming ? '¿seguro?' : 'parar'
 
@@ -481,6 +723,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
       // Terminal rows stay readable but recede: they must not compete with a
       // running or stalled session.
       opacity: terminal ? 0.72 : undefined,
+      borderLeft: stalled ? '3px solid ' + DESTRUCTIVE : waiting ? '3px solid ' + AMBER : undefined,
       boxShadow: stalled
         ? 'inset 0 0 0 1px color-mix(in srgb, ' + DESTRUCTIVE + ' 34%, transparent)'
         : 'none'
@@ -522,6 +765,23 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
                     },
                     children: session.title || session.id
                   }),
+                  waiting
+                    ? jsx('span', {
+                        style: {
+                          flex: '0 0 auto',
+                          padding: '0 3px',
+                          border: '1px solid color-mix(in srgb, ' + AMBER + ' 34%, transparent)',
+                          borderRadius: '3px',
+                          color: AMBER,
+                          background: 'color-mix(in srgb, ' + AMBER + ' 12%, transparent)',
+                          fontFamily: MONO,
+                          fontSize: '8.5px',
+                          lineHeight: '1.4',
+                          whiteSpace: 'nowrap'
+                        },
+                        children: 'espera'
+                      })
+                    : null,
                   // The bot's title, never the raw slug. It sits after the
                   // title and truncates first so the session name keeps its room.
                   jsx('span', {
@@ -634,6 +894,7 @@ function RadarPane({ ctx }) {
   const [snapshot, setSnapshot] = useState(null)
   const [offline, setOffline] = useState(false)
   const [stopping, setStopping] = useState({})
+  const [size, setSize] = useState(() => storedSize(ctx))
   const mounted = useRef(true)
   const debounce = useRef(0)
 
@@ -713,6 +974,26 @@ function RadarPane({ ctx }) {
     [ctx, load, stopping]
   )
 
+  // Re-registering the pane is the only resize the host allows. It happens one
+  // macrotask later so the component is not unmounted in the middle of the
+  // render that received the click.
+  const chooseSize = useCallback(
+    next => {
+      const key = paneSize(next)
+      if (key === size) return
+      setSize(key)
+      writeSetting(ctx, SETTING_KEYS.size, key)
+      setTimeout(() => {
+        try {
+          registerRadarPane(ctx, key)
+        } catch (_error) {
+          // The plugin may have been unloaded between the click and this tick.
+        }
+      }, 0)
+    },
+    [ctx, size]
+  )
+
   const data = snapshot || {}
   const totals = data.totals || {}
   const now = Date.now()
@@ -725,9 +1006,13 @@ function RadarPane({ ctx }) {
     )
 
   const age = data.generated_at ? Math.max(0, Math.floor(now / 1000) - Number(data.generated_at)) : 0
-  const liveCount = totals.live || 0
   const dormant = totals.dormant || 0
-  const finishedCount = rows.filter(session => TERMINAL_STATES.includes(session.state)).length
+  // F8: the footer leads with the two numbers the user acts on, plus stalled.
+  // Both aggregates fall back to their per-state parts on an older payload.
+  const workingCount =
+    totals.working !== undefined ? totals.working : (totals.running || 0) + (totals.queued || 0)
+  const waitingCount = totals.waiting !== undefined ? totals.waiting : totals.idle || 0
+  const stalledCount = totals.stalled || 0
   const profileErrors = Object.keys(data.profile_errors || {})
 
   return jsxs('div', {
@@ -743,6 +1028,84 @@ function RadarPane({ ctx }) {
     },
     children: [
       jsx('style', { children: ANIMATION_CSS }),
+      // Compact header: the four sizes on the left, «expandir» on the right.
+      // No title: the Desktop's floating chrome already carries one.
+      jsxs('div', {
+        className: 'sp-head',
+        style: {
+          flex: '0 0 auto',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '3px',
+          height: '22px',
+          padding: '0 6px 0 8px',
+          borderBottom: '1px solid ' + BORDER,
+          fontFamily: MONO,
+          fontSize: '9.5px',
+          color: MUTED
+        },
+        children: [
+          ...SIZE_ORDER.map(key =>
+            jsx(
+              'button',
+              {
+                type: 'button',
+                className: 'sp-size' + (key === size ? ' sp-size-on' : ''),
+                'data-size': key,
+                'aria-pressed': key === size ? 'true' : 'false',
+                'aria-label': 'tamaño ' + key.toUpperCase(),
+                title: PANE_SIZES[key].width + ' × ' + PANE_SIZES[key].height,
+                onClick: () => chooseSize(key),
+                children: key.toUpperCase(),
+                style: {
+                  appearance: 'none',
+                  height: '16px',
+                  padding: '0 4px',
+                  border: '1px solid ' + (key === size ? ORANGE : 'transparent'),
+                  borderRadius: '4px',
+                  background:
+                    key === size ? 'color-mix(in srgb, ' + ORANGE + ' 16%, transparent)' : 'transparent',
+                  color: key === size ? FG : MUTED,
+                  fontFamily: MONO,
+                  fontSize: '9.5px',
+                  fontWeight: key === size ? 700 : 400,
+                  lineHeight: 1,
+                  cursor: 'pointer'
+                }
+              },
+              key
+            )
+          ),
+          jsx('span', { style: { flex: 1 } }),
+          typeof host.revealPane === 'function'
+            ? jsx(
+                'button',
+                {
+                  type: 'button',
+                  className: 'sp-expand',
+                  'aria-label': 'expandir panel lateral',
+                  title: 'Expandir en el panel lateral',
+                  onClick: expandRadarPanel,
+                  children: '⤢',
+                  style: {
+                    appearance: 'none',
+                    height: '16px',
+                    padding: '0 4px',
+                    border: '1px solid ' + BORDER,
+                    borderRadius: '4px',
+                    background: 'transparent',
+                    color: MUTED,
+                    fontFamily: MONO,
+                    fontSize: '11px',
+                    lineHeight: 1,
+                    cursor: 'pointer'
+                  }
+                },
+                '⤢'
+              )
+            : null
+        ]
+      }),
       rows.length
         ? jsx('div', {
             style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 6px', scrollbarWidth: 'thin' },
@@ -785,16 +1148,20 @@ function RadarPane({ ctx }) {
           flex: '0 0 auto',
           display: 'flex',
           alignItems: 'center',
-          gap: '6px',
+          gap: '4px',
           height: '22px',
           padding: '0 8px',
           borderTop: '1px solid ' + BORDER,
           fontFamily: MONO,
           fontSize: '9.5px',
-          color: MUTED
+          color: MUTED,
+          // The counts are the footer's contract: never wrap them under the
+          // card. The age gives way first (the parent clips the overflow).
+          overflow: 'hidden'
         },
         children: [
           jsxs('span', {
+            style: { flex: '0 0 auto', whiteSpace: 'nowrap' },
             children: [
               jsx('span', {
                 'aria-hidden': true,
@@ -808,27 +1175,15 @@ function RadarPane({ ctx }) {
                   verticalAlign: 'middle'
                 }
               }),
-              jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(liveCount) }),
-              ' live',
-              // Only when it adds information: an all-live panel keeps one number.
-              finishedCount
-                ? jsxs('span', {
-                    children: [
-                      ' · ',
-                      jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(finishedCount) }),
-                      ' terminadas'
-                    ]
-                  })
-                : null,
-              dormant
-                ? jsxs('span', {
-                    children: [
-                      ' · ',
-                      jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(dormant) }),
-                      ' inactivas'
-                    ]
-                  })
-                : null
+              jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(workingCount) }),
+              ' trabajando · ',
+              jsx('b', { style: { color: waitingCount ? AMBER : FG, fontWeight: 600 }, children: String(waitingCount) }),
+              ' esperando · ',
+              jsx('b', {
+                style: { color: stalledCount ? WARN : FG, fontWeight: 600 },
+                children: String(stalledCount)
+              }),
+              ' colgadas'
             ]
           }),
           profileErrors.length
@@ -849,6 +1204,712 @@ function RadarPane({ ctx }) {
             : null,
           jsx('span', { style: { flex: 1 } }),
           jsx('span', {
+            style: { flex: '0 0 auto', whiteSpace: 'nowrap', color: offline ? WARN : undefined },
+            children: offline ? 'sin conexión' : 'hace ' + age + 's'
+          })
+        ]
+      })
+    ]
+  })
+}
+
+/**
+ * One row in the full side panel.
+ *
+ * It keeps the floating row's open/stop contract and adds the two affordances a
+ * full-width panel can afford: the session id copy and the activity timestamp.
+ * Waiting rows are amber; stalled rows are red. Neither colour is used for the
+ * other state.
+ */
+function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy, ctx }) {
+  const [hovered, setHovered] = useState(false)
+  const waiting = session.state === 'idle'
+  const stalled = session.state === 'stalled'
+  const terminal = TERMINAL_STATES.includes(session.state)
+  const canStop =
+    Boolean(session.can_interrupt) &&
+    (session.state === 'running' || session.state === 'stalled')
+  const confirming = stop && stop.phase === 'confirm' && stop.until > now
+  const sending = stop && stop.phase === 'sending'
+  const stopDone = stop && stop.phase === 'done' && stop.until > now
+  const stopFailed = stop && stop.phase === 'error'
+  const activity = activityFor(session, now)
+  const when = session.last_activity_at
+    ? fmtAgo(session.last_activity_at, now)
+    : Math.max(0, Math.round(Number(session.elapsed_s) || 0)) + ' s'
+
+  const base = stalled
+    ? 'color-mix(in srgb, ' + DESTRUCTIVE + ' 9%, transparent)'
+    : waiting
+      ? 'color-mix(in srgb, ' + AMBER + ' 10%, transparent)'
+      : 'transparent'
+  const background = !hovered
+    ? base
+    : stalled
+      ? 'color-mix(in srgb, ' + DESTRUCTIVE + ' 15%, transparent)'
+      : 'color-mix(in srgb, ' + FG + ' 7%, transparent)'
+
+  const stopLabel = sending ? '…' : confirming ? '¿seguro?' : 'parar'
+
+  return jsxs('div', {
+    className: 'sp-row sp-panel-row',
+    title: session.id + (session.git_branch ? ' · ' + session.git_branch : ''),
+    onMouseEnter: () => setHovered(true),
+    onMouseLeave: () => setHovered(false),
+    style: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '8px',
+      padding: compact ? '4px 6px' : '7px 8px',
+      borderRadius: '7px',
+      background,
+      borderLeft: stalled
+        ? '3px solid ' + DESTRUCTIVE
+        : waiting
+          ? '3px solid ' + AMBER
+          : '3px solid transparent',
+      opacity: terminal ? 0.72 : undefined
+    },
+    children: [
+      jsxs('button', {
+        type: 'button',
+        className: 'sp-open',
+        onClick: () => onOpen(session),
+        children: [
+          jsx(Avatar, {
+            profile: session.profile,
+            title: session.profile_title || session.profile_label,
+            avatar: session.avatar,
+            ctx
+          }),
+          jsxs('div', {
+            style: { flex: 1, minWidth: 0 },
+            children: [
+              jsxs('div', {
+                style: { display: 'flex', alignItems: 'center', gap: '6px', minWidth: 0 },
+                children: [
+                  jsx('span', {
+                    style: {
+                      flex: 1,
+                      minWidth: 0,
+                      fontSize: '11.5px',
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    },
+                    children: session.title || session.id
+                  }),
+                  waiting
+                    ? jsx('span', {
+                        style: {
+                          flex: '0 0 auto',
+                          padding: '0 4px',
+                          border: '1px solid color-mix(in srgb, ' + AMBER + ' 34%, transparent)',
+                          borderRadius: '3px',
+                          color: AMBER,
+                          background: 'color-mix(in srgb, ' + AMBER + ' 12%, transparent)',
+                          fontFamily: MONO,
+                          fontSize: '9px',
+                          lineHeight: '1.4',
+                          whiteSpace: 'nowrap'
+                        },
+                        children: 'espera'
+                      })
+                    : null,
+                  jsx('span', {
+                    title:
+                      session.profile_title || session.profile_label || session.profile || 'default',
+                    style: {
+                      flex: '0 0 auto',
+                      maxWidth: '92px',
+                      padding: '0 3px',
+                      border: '1px solid ' + BORDER,
+                      borderRadius: '3px',
+                      color: MUTED,
+                      fontFamily: MONO,
+                      fontSize: '8.5px',
+                      lineHeight: '1.4',
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    },
+                    children:
+                      session.profile_title || session.profile_label || session.profile || 'default'
+                  })
+                ]
+              }),
+              stopFailed
+                ? jsx('div', {
+                    style: { marginTop: '2px', fontFamily: MONO, fontSize: '9px', color: WARN },
+                    children: stop.message
+                  })
+                : stopDone
+                  ? jsx('div', {
+                      style: { marginTop: '2px', fontFamily: MONO, fontSize: '9px', color: GREEN },
+                      children: 'interrumpida'
+                    })
+                  : jsxs('div', {
+                      style: {
+                        marginTop: '2px',
+                        display: 'flex',
+                        gap: '6px',
+                        minWidth: 0,
+                        fontFamily: MONO,
+                        fontSize: '9.5px',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis'
+                      },
+                      children: [
+                        session.tool
+                          ? jsx('span', {
+                              style: { color: VIOLET, flex: '0 0 auto' },
+                              children: session.tool
+                            })
+                          : null,
+                        activity.text
+                          ? jsx('span', {
+                              style: {
+                                color: activity.warn ? WARN : MUTED,
+                                minWidth: 0,
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis'
+                              },
+                              children: activity.text
+                            })
+                          : null
+                      ]
+                    })
+            ]
+          })
+        ]
+      }),
+      jsx('span', {
+        style: {
+          flex: '0 0 auto',
+          minWidth: '42px',
+          textAlign: 'right',
+          fontFamily: MONO,
+          fontSize: '9px',
+          color: waiting ? AMBER : MUTED
+        },
+        children: when
+      }),
+      canStop
+        ? jsx('button', {
+            type: 'button',
+            className: 'sp-stop',
+            'aria-label': 'interrumpir ' + (session.title || session.id),
+            disabled: sending,
+            onClick: event => {
+              event.stopPropagation()
+              onStop(session)
+            },
+            style: {
+              flex: '0 0 auto',
+              width: '56px',
+              textAlign: 'center',
+              border: '1px solid ' + (confirming ? ORANGE : BORDER),
+              borderRadius: '5px',
+              background: confirming ? ORANGE : 'transparent',
+              color: confirming ? ACCENT_INK : MUTED,
+              fontFamily: MONO,
+              fontSize: '9px',
+              lineHeight: 1.4,
+              padding: '1px 4px',
+              cursor: sending ? 'default' : 'pointer'
+            },
+            children: stopLabel
+          })
+        : null,
+      jsx('button', {
+        type: 'button',
+        'aria-label': 'copiar id de ' + (session.title || session.id),
+        onClick: event => {
+          event.stopPropagation()
+          onCopy(session)
+        },
+        style: {
+          flex: '0 0 auto',
+          width: '52px',
+          textAlign: 'center',
+          border: '1px solid ' + BORDER,
+          borderRadius: '5px',
+          background: 'transparent',
+          color: copied ? GREEN : MUTED,
+          fontFamily: MONO,
+          fontSize: '9px',
+          lineHeight: 1.4,
+          padding: '1px 4px',
+          cursor: 'pointer'
+        },
+        children: copied ? 'copiado' : 'copiar'
+      })
+    ]
+  })
+}
+
+/**
+ * The full panel.
+ *
+ * Registered as `radar:panel` with `placement: 'right'` and a 380 px width, so
+ * the Desktop tiles it into the right sidebar role instead of floating it. The
+ * floating card stays the quick view. Like the quick view, it owns its interval
+ * and its `plugin.radar.changed` subscription: no `lifecycleKeepAlive`.
+ */
+function RadarPanel({ ctx }) {
+  const [snapshot, setSnapshot] = useState(null)
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS)
+  const [offline, setOffline] = useState(false)
+  const [stopping, setStopping] = useState({})
+  const [copied, setCopied] = useState({})
+  const mounted = useRef(true)
+  const debounce = useRef(0)
+  const settingsRef = useRef(settings)
+  settingsRef.current = settings
+
+  const load = useCallback(async () => {
+    try {
+      const data = await ctx.rest(livePathFor(settingsRef.current))
+      if (!mounted.current) return
+      setSnapshot(data)
+      setOffline(false)
+    } catch (_error) {
+      if (!mounted.current) return
+      setOffline(true)
+    }
+  }, [ctx])
+
+  useEffect(() => {
+    mounted.current = true
+    let alive = true
+
+    Promise.all([
+      readSetting(ctx, SETTING_KEYS.filter, DEFAULT_SETTINGS.filter),
+      readSetting(ctx, SETTING_KEYS.profiles, DEFAULT_SETTINGS.profiles),
+      readSetting(ctx, SETTING_KEYS.window, DEFAULT_SETTINGS.window),
+      readSetting(ctx, SETTING_KEYS.finished, DEFAULT_SETTINGS.finished),
+      readSetting(ctx, SETTING_KEYS.density, DEFAULT_SETTINGS.density)
+    ]).then(values => {
+      if (!alive) return
+      const next = {
+        filter: ['all', 'working', 'waiting', 'problem'].includes(values[0]) ? values[0] : 'all',
+        profiles: values[1] === 'current' ? 'current' : 'all',
+        window: WINDOW_CHOICES.includes(Number(values[2])) ? Number(values[2]) : 180,
+        finished: values[3] !== false && values[3] !== 'false',
+        density: values[4] === 'compact' ? 'compact' : 'comfortable'
+      }
+      settingsRef.current = next
+      setSettings(next)
+      load()
+    })
+
+    load()
+    const interval = setInterval(load, REFRESH_MS)
+    const off = host.onEvent('plugin.radar.changed', () => {
+      if (debounce.current) clearTimeout(debounce.current)
+      debounce.current = setTimeout(() => {
+        debounce.current = 0
+        load()
+      }, EVENT_DEBOUNCE_MS)
+    })
+    return () => {
+      alive = false
+      mounted.current = false
+      clearInterval(interval)
+      if (debounce.current) clearTimeout(debounce.current)
+      if (typeof off === 'function') off()
+    }
+  }, [ctx, load])
+
+  const changeSetting = useCallback(
+    (key, value) => {
+      const next = { ...settingsRef.current, [key]: value }
+      settingsRef.current = next
+      setSettings(next)
+      writeSetting(ctx, SETTING_KEYS[key], value)
+      if (key === 'profiles' || key === 'window') load()
+    },
+    [ctx, load]
+  )
+
+  const open = useCallback(session => {
+    const profile = String(session.profile || '').trim()
+    const request = profile ? host.openSession(session.id, { profile }) : host.openSession(session.id)
+    Promise.resolve(request).catch(error => {
+      if (typeof host.notify === 'function') {
+        host.notify({ kind: 'error', message: 'No se pudo abrir la sesión: ' + messageOf(error) })
+      }
+    })
+  }, [])
+
+  const stop = useCallback(
+    session => {
+      const current = stopping[session.id]
+      const now = Date.now()
+      if (current && current.phase === 'confirm' && current.until > now) {
+        setStopping(state => ({ ...state, [session.id]: { phase: 'sending' } }))
+        interruptSession(ctx, session, livePathFor(settingsRef.current))
+          .then(() => {
+            if (!mounted.current) return
+            setStopping(state => ({
+              ...state,
+              [session.id]: { phase: 'done', until: Date.now() + INTERRUPTED_MS }
+            }))
+            load()
+          })
+          .catch(error => {
+            if (!mounted.current) return
+            setStopping(state => ({
+              ...state,
+              [session.id]: { phase: 'error', message: messageOf(error) }
+            }))
+          })
+        return
+      }
+      setStopping(state => ({
+        ...state,
+        [session.id]: { phase: 'confirm', until: Date.now() + CONFIRM_MS }
+      }))
+    },
+    [ctx, load, stopping]
+  )
+
+  const copy = useCallback(
+    session => {
+      copySessionId(ctx, session).then(ok => {
+        if (!ok || !mounted.current) return
+        setCopied(state => ({ ...state, [session.id]: true }))
+        setTimeout(() => {
+          if (!mounted.current) return
+          setCopied(state => {
+            const next = { ...state }
+            delete next[session.id]
+            return next
+          })
+        }, 1600)
+      })
+    },
+    [ctx]
+  )
+
+  const data = snapshot || {}
+  const totals = data.totals || {}
+  const now = Date.now()
+  const sessions = (Array.isArray(data.sessions) ? data.sessions : []).filter(
+    session => session.state !== 'dormant'
+  )
+
+  const workingCount =
+    totals.working !== undefined
+      ? totals.working
+      : (totals.running || 0) + (totals.queued || 0)
+  const waitingCount = totals.waiting !== undefined ? totals.waiting : totals.idle || 0
+  const stalledCount = totals.stalled || 0
+
+  const filterCounts = {
+    all: sessions.filter(
+      session => settings.finished !== false || !TERMINAL_STATES.includes(session.state)
+    ).length,
+    working: sessions.filter(
+      session => session.state === 'running' || session.state === 'queued'
+    ).length,
+    waiting: sessions.filter(session => session.state === 'idle').length,
+    problem: sessions.filter(
+      session =>
+        session.state === 'stalled' ||
+        (session.state === 'failed' && settings.finished !== false)
+    ).length
+  }
+  const visible = sessionsForFilter(sessions, settings.filter)
+  // Only non-empty groups are painted: the header counters already carry the
+  // zero counts, and a filtered view should not spend its height on empties.
+  const groups = panelGroups(visible, settings).filter(group => group.items.length > 0)
+  const shown = groups.reduce((total, group) => total + group.items.length, 0)
+  const compact = settings.density === 'compact'
+  const age = data.generated_at ? Math.max(0, Math.floor(now / 1000) - Number(data.generated_at)) : 0
+  const profileErrors = Object.keys(data.profile_errors || {})
+
+  const counters = [
+    { key: 'working', label: 'trabajando', value: workingCount, color: FG },
+    { key: 'waiting', label: 'esperando', value: waitingCount, color: waitingCount ? AMBER : MUTED },
+    // `problem` is the filter that covers stalled rows; the label stays "colgadas".
+    { key: 'problem', label: 'colgadas', value: stalledCount, color: stalledCount ? DESTRUCTIVE : MUTED }
+  ]
+
+  const select = (label, value, options, onChange) =>
+    jsxs('label', {
+      style: { display: 'grid', gap: '2px', fontFamily: MONO, fontSize: '9.5px', color: MUTED },
+      children: [
+        label,
+        jsx('select', {
+          value,
+          onChange: event => onChange(event.target.value),
+          style: {
+            width: '100%',
+            padding: '2px 4px',
+            border: '1px solid ' + BORDER,
+            borderRadius: '5px',
+            background: CARD,
+            color: FG,
+            fontFamily: MONO,
+            fontSize: '10px'
+          },
+          children: options.map(option =>
+            jsx('option', { value: option[0], children: option[1] }, option[0])
+          )
+        })
+      ]
+    })
+
+  return jsxs('div', {
+    style: {
+      height: '100%',
+      minHeight: 0,
+      display: 'flex',
+      flexDirection: 'column',
+      background: CARD,
+      color: FG,
+      fontFamily: SANS,
+      overflow: 'hidden'
+    },
+    children: [
+      jsx('style', { children: ANIMATION_CSS }),
+      jsxs('div', {
+        style: {
+          flex: '0 0 auto',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          padding: '8px 8px 6px',
+          borderBottom: '1px solid ' + BORDER
+        },
+        children: [
+          ...counters.map(counter =>
+            jsxs(
+              'button',
+              {
+                type: 'button',
+                'data-counter': counter.key,
+                onClick: () => changeSetting('filter', counter.key),
+                style: {
+                  flex: 1,
+                  minWidth: 0,
+                  display: 'grid',
+                  gap: '1px',
+                  padding: '4px 6px',
+                  border: '1px solid ' + BORDER,
+                  borderRadius: '7px',
+                  background: 'transparent',
+                  color: counter.color,
+                  textAlign: 'left',
+                  cursor: 'pointer'
+                },
+                children: [
+                  jsx('b', { style: { fontSize: '19px', lineHeight: 1, fontWeight: 700 }, children: String(counter.value) }),
+                  jsx('span', {
+                    style: { fontFamily: MONO, fontSize: '9px', color: MUTED, whiteSpace: 'nowrap' },
+                    children: counter.label
+                  })
+                ]
+              },
+              counter.key
+            )
+          ),
+          jsxs('details', {
+            style: { position: 'relative', flex: '0 0 auto' },
+            children: [
+              jsx('summary', {
+                style: {
+                  cursor: 'pointer',
+                  fontFamily: MONO,
+                  fontSize: '9.5px',
+                  color: MUTED,
+                  padding: '4px 5px',
+                  border: '1px solid ' + BORDER,
+                  borderRadius: '6px',
+                  whiteSpace: 'nowrap'
+                },
+                children: 'Ajustes'
+              }),
+              jsxs('div', {
+                style: {
+                  position: 'absolute',
+                  right: 0,
+                  top: '100%',
+                  zIndex: 20,
+                  width: '188px',
+                  display: 'grid',
+                  gap: '6px',
+                  marginTop: '4px',
+                  padding: '8px',
+                  border: '1px solid ' + BORDER,
+                  borderRadius: '8px',
+                  background: CARD,
+                  boxShadow: '0 8px 22px rgba(0, 0, 0, .28)'
+                },
+                children: [
+                  select(
+                    'Perfiles',
+                    settings.profiles,
+                    [
+                      ['all', 'Todos'],
+                      ['current', 'Solo el actual']
+                    ],
+                    value => changeSetting('profiles', value)
+                  ),
+                  select(
+                    'Ventana',
+                    String(settings.window),
+                    [
+                      ['60', '1 min'],
+                      ['180', '3 min'],
+                      ['600', '10 min']
+                    ],
+                    value => changeSetting('window', Number(value))
+                  ),
+                  select(
+                    'Mostrar terminadas',
+                    settings.finished ? 'true' : 'false',
+                    [
+                      ['true', 'sí'],
+                      ['false', 'no']
+                    ],
+                    value => changeSetting('finished', value === 'true')
+                  ),
+                  select(
+                    'Densidad',
+                    settings.density,
+                    [
+                      ['compact', 'compacta'],
+                      ['comfortable', 'cómoda']
+                    ],
+                    value => changeSetting('density', value)
+                  )
+                ]
+              })
+            ]
+          })
+        ]
+      }),
+      jsxs('div', {
+        style: { flex: '0 0 auto', display: 'flex', gap: '3px', padding: '6px 8px 0' },
+        children: PANEL_FILTERS.map(tab =>
+          jsx(
+            'button',
+            {
+              type: 'button',
+              'data-filter': tab.key,
+              onClick: () => changeSetting('filter', tab.key),
+              style: {
+                flex: 1,
+                padding: '3px 4px',
+                border: '1px solid ' + (settings.filter === tab.key ? BORDER : 'transparent'),
+                borderRadius: '6px',
+                background:
+                  settings.filter === tab.key ? 'color-mix(in srgb, ' + FG + ' 8%, transparent)' : 'transparent',
+                color: settings.filter === tab.key ? FG : MUTED,
+                fontFamily: MONO,
+                fontSize: '9px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
+              },
+              children: tab.label + ' ' + (filterCounts[tab.key] || 0)
+            },
+            tab.key
+          )
+        )
+      }),
+      shown
+        ? jsx('div', {
+            style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 6px 6px', scrollbarWidth: 'thin' },
+            children: groups.map(group =>
+              jsxs(
+                'section',
+                {
+                  children: [
+                    jsxs('div', {
+                      style: {
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 4px 3px',
+                        fontFamily: MONO,
+                        fontSize: '9px',
+                        color: MUTED,
+                        letterSpacing: '.3px',
+                        textTransform: 'uppercase'
+                      },
+                      children: [
+                        jsx('span', { style: { flex: 1 }, children: group.label }),
+                        jsx('span', { children: String(group.items.length) })
+                      ]
+                    }),
+                    ...group.items.map(session =>
+                      jsx(
+                        PanelRow,
+                        {
+                          session,
+                          now,
+                          compact,
+                          stop: stopping[session.id],
+                          copied: Boolean(copied[session.id]),
+                          onOpen: open,
+                          onStop: stop,
+                          onCopy: copy,
+                          ctx
+                        },
+                        session.id
+                      )
+                    )
+                  ]
+                },
+                group.key
+              )
+            )
+          })
+        : jsxs('div', {
+            style: {
+              flex: 1,
+              minHeight: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '3px',
+              padding: '12px',
+              textAlign: 'center'
+            },
+            children: [
+              jsx('span', { style: { fontSize: '11.5px', fontWeight: 600 }, children: 'Ninguna sesión en la ventana' }),
+              jsx('span', {
+                style: { fontFamily: MONO, fontSize: '9.5px', color: MUTED },
+                children: (totals.dormant || 0) + ' inactivas'
+              })
+            ]
+          }),
+      jsxs('div', {
+        style: {
+          flex: '0 0 auto',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '6px',
+          minHeight: '20px',
+          padding: '0 8px',
+          borderTop: '1px solid ' + BORDER,
+          fontFamily: MONO,
+          fontSize: '9px',
+          color: MUTED
+        },
+        children: [
+          jsx('span', {
+            style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+            children: profileErrors.length
+              ? 'sin conexión · ' + profileErrors.join(', ')
+              : 'ventana ' + settings.window + ' s · ' + settings.profiles
+          }),
+          jsx('span', {
             style: offline ? { color: WARN } : undefined,
             children: offline ? 'sin conexión' : 'hace ' + age + 's'
           })
@@ -858,23 +1919,31 @@ function RadarPane({ ctx }) {
   })
 }
 
+/**
+ * Register both surfaces: the floating quick view and the full right panel.
+ * Neither asks for `lifecycleKeepAlive`: each body owns its interval and its
+ * event subscription, so collapsing or closing it stops the work.
+ */
+function register(ctx) {
+  // The remembered size is read synchronously, so the pane never mounts at the
+  // default and then jumps: the first registration is already the right one.
+  registerRadarPane(ctx, storedSize(ctx))
+
+  ctx.register({
+    id: 'radar:panel',
+    area: 'panes',
+    title: 'Radar',
+    data: {
+      placement: 'right',
+      width: '380px'
+    },
+    render: () => jsx(RadarPanel, { ctx })
+  })
+}
+
 export default {
   id: PLUGIN_ID,
   name: PLUGIN_NAME,
   version: VERSION,
-  register(ctx) {
-    // No `lifecycleKeepAlive`: collapse unmounts the body and stops the poll.
-    ctx.register({
-      id: 'radar',
-      area: 'panes',
-      title: 'Radar',
-      data: {
-        placement: 'floating',
-        anchor: 'bottom-right',
-        width: '320px',
-        height: '214px'
-      },
-      render: () => jsx(RadarPane, { ctx })
-    })
-  }
+  register
 }

@@ -43,6 +43,12 @@ const exported = [
   'SessionRow',
   'StateGlyph',
   'RadarPane',
+  'RadarPanel',
+  'register',
+  'livePathFor',
+  'panelGroups',
+  'readSetting',
+  'writeSetting',
   'Avatar',
   'avatarFor',
   'loadAvatar',
@@ -53,13 +59,19 @@ const exported = [
   'messageOf',
   'ANIMATION_CSS',
   'AVATARS',
-  'FG'
+  'FG',
+  'PANE_SIZES',
+  'SIZE_ORDER',
+  'storedSize',
+  'registerRadarPane',
+  'expandRadarPanel'
 ]
 
 const dir = mkdtempSync(join(tmpdir(), 'radar-js-'))
 const modulePath = join(dir, 'plugin-under-test.mjs')
 writeFileSync(modulePath, stubs + body + '\nexport { ' + exported.join(', ') + ' }\n')
 
+const settingsStore = new Map()
 const hostStub = {
   state: { profile: { get: () => 'default' } },
   request: async () => ({ status: 'interrupted' }),
@@ -67,7 +79,16 @@ const hostStub = {
   requestProfile: async () => ({ status: 'interrupted' }),
   openSession: async () => {},
   notify: () => {},
-  onEvent: () => () => {}
+  onEvent: () => () => {},
+  storage: {
+    get: (key, fallback) => (settingsStore.has(key) ? settingsStore.get(key) : fallback),
+    set: (key, value) => {
+      settingsStore.set(key, value)
+    },
+    remove: key => {
+      settingsStore.delete(key)
+    }
+  }
 }
 globalThis.__SP_HOST__ = hostStub
 globalThis.__SP_STATE__ = []
@@ -562,27 +583,349 @@ test('an active row keeps full opacity and its stop control', () => {
   assert.ok(walk(tree).some(node => node.props && node.props.className === 'sp-stop'))
 })
 
-test('the footer reads live, then finished, then dormant', () => {
+test('the footer reads working, waiting and stalled', () => {
   const snapshot = {
     generated_at: NOW_S - 1,
     profiles: ['default'],
     window_s: 180,
-    sessions: [freshRow(), freshRow({ id: 'd', state: 'done', can_interrupt: false })],
+    sessions: [
+      freshRow(),
+      freshRow({ id: 'q', state: 'queued', can_interrupt: false }),
+      freshRow({ id: 'i', state: 'idle', can_interrupt: false }),
+      freshRow({ id: 's', state: 'stalled' })
+    ],
     totals: {
       running: 1,
-      queued: 0,
-      stalled: 0,
-      idle: 0,
+      queued: 1,
+      stalled: 1,
+      idle: 2,
       done: 1,
       failed: 0,
-      live: 2,
+      working: 2,
+      waiting: 2,
+      live: 3,
       dormant: 3,
-      sessions: 2
+      sessions: 5
     }
   }
   globalThis.__SP_STATE__ = [snapshot, false, {}]
   const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
-  assert.match(plainText(tree), /2 live · 1 terminadas · 3 inactivas/)
+  assert.match(plainText(tree), /2 trabajando · 2 esperando · 1 colgadas/)
+})
+
+test('the footer derives working and waiting when the payload predates them', () => {
+  const snapshot = {
+    generated_at: NOW_S - 1,
+    profiles: ['default'],
+    window_s: 180,
+    sessions: [
+      freshRow(),
+      freshRow({ id: 'q', state: 'queued', can_interrupt: false }),
+      freshRow({ id: 'i1', state: 'idle', can_interrupt: false }),
+      freshRow({ id: 'i2', state: 'idle', can_interrupt: false })
+    ],
+    totals: {
+      running: 1,
+      queued: 1,
+      stalled: 0,
+      idle: 2,
+      done: 0,
+      failed: 0,
+      live: 2,
+      dormant: 0,
+      sessions: 4
+    }
+  }
+  globalThis.__SP_STATE__ = [snapshot, false, {}]
+  const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
+  assert.match(plainText(tree), /2 trabajando · 2 esperando · 0 colgadas/)
+})
+
+test('an idle floating row paints the amber espera badge', () => {
+  globalThis.__SP_STATE__ = []
+  const tree = mod.SessionRow({
+    session: freshRow({ state: 'idle', can_interrupt: false }),
+    now: NOW_MS,
+    stop: undefined,
+    onOpen: () => {},
+    onStop: () => {}
+  })
+
+  const text = strings(tree)
+  assert.ok(text.includes('espera'), JSON.stringify(text))
+  const badge = walk(tree).find(node => node.props && node.props.children === 'espera')
+  assert.ok(badge, 'the idle row needs an espera badge')
+  assert.match(String(badge.props.style.color), /d29922|amber/i)
+  assert.match(String(tree.props.style.background), /d29922|amber/i)
+})
+
+// ---------------------------------------------------------------------------
+// F8 — two panes, settings, grouping and the full side panel
+// ---------------------------------------------------------------------------
+
+test('register contributes the floating quick view and the right panel', () => {
+  // The floating size is remembered now: start from the documented default.
+  settingsStore.delete('radar.size')
+  const registered = []
+  mod.register({ register: pane => registered.push(pane) })
+
+  assert.equal(registered.length, 2)
+  const floating = registered.find(pane => pane.id === 'radar')
+  const panel = registered.find(pane => pane.id === 'radar:panel')
+  assert.ok(floating, 'the floating quick view keeps its id')
+  assert.ok(panel, 'the side panel is radar:panel')
+  assert.equal(floating.area, 'panes')
+  assert.equal(floating.data.placement, 'floating')
+  assert.equal(floating.data.width, '320px')
+  assert.equal(floating.data.height, '214px')
+  assert.equal(panel.area, 'panes')
+  assert.equal(panel.title, 'Radar')
+  assert.equal(panel.data.placement, 'right')
+  assert.equal(panel.data.width, '380px')
+})
+
+test('livePathFor defaults to all/180 and follows current/600 settings', () => {
+  assert.equal(mod.livePathFor(), '/live?profiles=all&window=180')
+  assert.equal(mod.livePathFor({}), '/live?profiles=all&window=180')
+  assert.equal(
+    mod.livePathFor({ profiles: 'current', window: 600 }),
+    '/live?profiles=current&window=600'
+  )
+  assert.equal(mod.livePathFor({ profiles: 'nope', window: 42 }), '/live?profiles=all&window=180')
+})
+
+test('settings round-trip through the host storage under radar.*', async () => {
+  settingsStore.clear()
+  await mod.writeSetting({}, 'radar.filter', 'waiting')
+  await mod.writeSetting({}, 'radar.window', 600)
+  assert.equal(await mod.readSetting({}, 'radar.filter', 'all'), 'waiting')
+  assert.equal(await mod.readSetting({}, 'radar.window', 180), 600)
+  assert.equal(settingsStore.get('radar.filter'), 'waiting')
+  assert.equal(settingsStore.get('radar.window'), 600)
+  assert.equal(await mod.readSetting({}, 'radar.missing', 'fallback'), 'fallback')
+
+  // ctx.storage wins over host.storage and is namespaced by the host.
+  const local = new Map()
+  const ctx = {
+    storage: {
+      get: (key, fallback) => (local.has(key) ? local.get(key) : fallback),
+      set: (key, value) => {
+        local.set(key, value)
+      },
+      remove: key => {
+        local.delete(key)
+      }
+    }
+  }
+  await mod.writeSetting(ctx, 'radar.density', 'compact')
+  assert.equal(await mod.readSetting(ctx, 'radar.density', 'comfortable'), 'compact')
+  assert.equal(local.get('radar.density'), 'compact')
+  assert.equal(settingsStore.has('radar.density'), false)
+})
+
+test('panelGroups groups running+queued, idle, stalled and terminal rows', () => {
+  const sessions = [
+    freshRow({ id: 'r', state: 'running' }),
+    freshRow({ id: 'q', state: 'queued', can_interrupt: false }),
+    freshRow({ id: 'i', state: 'idle', can_interrupt: false }),
+    freshRow({ id: 's', state: 'stalled' }),
+    freshRow({ id: 'd', state: 'done', can_interrupt: false }),
+    freshRow({ id: 'f', state: 'failed', can_interrupt: false })
+  ]
+
+  const groups = mod.panelGroups(sessions, { finished: true })
+  const byKey = Object.fromEntries(groups.map(group => [group.key, group]))
+  assert.deepEqual(byKey.working.items.map(item => item.id), ['r', 'q'])
+  assert.deepEqual(byKey.waiting.items.map(item => item.id), ['i'])
+  assert.deepEqual(byKey.stalled.items.map(item => item.id), ['s'])
+  assert.deepEqual(byKey.finished.items.map(item => item.id), ['d', 'f'])
+  assert.equal(byKey.working.label, 'Trabajando')
+  assert.equal(byKey.waiting.label, 'Esperando')
+  assert.equal(byKey.stalled.label, 'Colgadas')
+  assert.equal(byKey.finished.label, 'Terminadas')
+
+  const hidden = mod.panelGroups(sessions, { finished: false })
+  assert.equal(hidden.some(group => group.key === 'finished'), false)
+})
+
+test('the panel header shows counters, filters and grouped rows', () => {
+  const snapshot = {
+    generated_at: NOW_S - 1,
+    profiles: ['default'],
+    window_s: 180,
+    sessions: [
+      freshRow(),
+      freshRow({ id: 'i', state: 'idle', can_interrupt: false }),
+      freshRow({ id: 's', state: 'stalled' }),
+      freshRow({ id: 'd', state: 'done', can_interrupt: false })
+    ],
+    totals: {
+      running: 1,
+      queued: 0,
+      stalled: 1,
+      idle: 1,
+      done: 1,
+      failed: 0,
+      working: 1,
+      waiting: 1,
+      live: 2,
+      dormant: 0,
+      sessions: 4
+    }
+  }
+  globalThis.__SP_STATE__ = [
+    snapshot,
+    { filter: 'all', profiles: 'all', window: 180, finished: true, density: 'comfortable' },
+    false,
+    {},
+    {}
+  ]
+  const tree = mod.RadarPanel({ ctx: { rest: async () => snapshot } })
+  const text = plainText(tree)
+  assert.match(text, /Trabajando/)
+  assert.match(text, /Esperando/)
+  assert.match(text, /Colgadas/)
+  assert.match(text, /Terminadas/)
+  assert.match(text, /Todas/)
+  assert.match(text, /Esperan/)
+  assert.match(text, /Problema/)
+  const tabs = walk(tree).filter(node => node.props && node.props['data-filter'])
+  assert.deepEqual(
+    tabs.map(node => node.props['data-filter']),
+    ['all', 'working', 'waiting', 'problem']
+  )
+})
+
+// ---------------------------------------------------------------------------
+// F9 — floating sizes and the «expandir» button
+// ---------------------------------------------------------------------------
+
+const F9_SNAPSHOT = {
+  generated_at: NOW_S - 1,
+  profiles: ['default'],
+  window_s: 180,
+  sessions: [freshRow()],
+  totals: { running: 1, live: 1, dormant: 0, sessions: 1, working: 1, waiting: 0, stalled: 0 }
+}
+
+function floatingTree(ctx) {
+  globalThis.__SP_STATE__ = [F9_SNAPSHOT, false, {}]
+  return mod.RadarPane({ ctx: ctx || { rest: async () => F9_SNAPSHOT } })
+}
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+test('the floating header offers S, M, L and XL and marks the active size', () => {
+  settingsStore.delete('radar.size')
+  const tree = floatingTree()
+  const buttons = walk(tree).filter(node => node.props && node.props['data-size'])
+
+  assert.deepEqual(
+    buttons.map(node => node.props['data-size']),
+    ['s', 'm', 'l', 'xl']
+  )
+  assert.deepEqual(
+    buttons.map(node => node.props.children),
+    ['S', 'M', 'L', 'XL']
+  )
+  assert.equal(buttons[0].props['aria-pressed'], 'true')
+  assert.equal(buttons[1].props['aria-pressed'], 'false')
+  assert.match(buttons[0].props.className, /sp-size-on/)
+  assert.doesNotMatch(buttons[1].props.className, /sp-size-on/)
+  assert.equal(mod.PANE_SIZES.m.width, '420px')
+  assert.equal(mod.PANE_SIZES.m.height, '300px')
+})
+
+test('choosing M re-registers the floating pane at 420 × 300', async () => {
+  settingsStore.clear()
+  const registered = []
+  const disposed = []
+  const ctx = {
+    rest: async () => F9_SNAPSHOT,
+    register: pane => {
+      registered.push(pane)
+      return () => disposed.push(pane.data.width)
+    }
+  }
+
+  // Seed the module-level registration so the click has something to dispose.
+  mod.registerRadarPane(ctx, 's')
+  assert.equal(registered.length, 1)
+
+  const tree = floatingTree(ctx)
+  const medium = walk(tree).find(node => node.props && node.props['data-size'] === 'm')
+  assert.ok(medium, 'the header needs an M button')
+  medium.props.onClick()
+  await sleep(5)
+
+  assert.equal(disposed.length, 1, 'the previous registration is disposed')
+  const floating = registered[registered.length - 1]
+  assert.equal(registered.length, 2)
+  assert.equal(floating.id, 'radar')
+  assert.equal(floating.data.placement, 'floating')
+  assert.equal(floating.data.anchor, 'bottom-right')
+  assert.equal(floating.data.width, '420px')
+  assert.equal(floating.data.height, '300px')
+  assert.equal(settingsStore.get('radar.size'), 'm')
+  assert.equal(typeof floating.render, 'function')
+  settingsStore.clear()
+})
+
+test('the remembered size is used on the first registration', () => {
+  settingsStore.clear()
+  settingsStore.set('radar.size', 'l')
+  const registered = []
+  mod.register({ register: pane => registered.push(pane) })
+
+  const floating = registered.find(pane => pane.id === 'radar')
+  assert.equal(floating.data.width, '520px')
+  assert.equal(floating.data.height, '380px')
+  settingsStore.clear()
+})
+
+test('a broken storage falls back to the S size', () => {
+  const registered = []
+  const ctx = {
+    storage: {
+      get: () => {
+        throw new Error('storage unavailable')
+      }
+    },
+    register: pane => registered.push(pane)
+  }
+  assert.equal(mod.storedSize(ctx), 's')
+  mod.register(ctx)
+
+  const floating = registered.find(pane => pane.id === 'radar')
+  assert.equal(floating.data.width, '320px')
+  assert.equal(floating.data.height, '214px')
+})
+
+test('the expand button reveals the scoped side-panel pane', () => {
+  const calls = []
+  hostStub.revealPane = id => calls.push(id)
+  try {
+    const tree = floatingTree()
+    const expand = walk(tree).find(node => node.props && node.props.className === 'sp-expand')
+    assert.ok(expand, 'with revealPane available the header paints the button')
+    assert.equal(expand.type, 'button')
+    assert.equal(expand.props.children, '⤢')
+    expand.props.onClick()
+    // The host scopes every contribution id: `radar:panel` is stored as
+    // `radar:radar:panel`, which is what revealPane consumes.
+    assert.deepEqual(calls, ['radar:radar:panel'])
+  } finally {
+    delete hostStub.revealPane
+  }
+})
+
+test('without revealPane the floating header paints no expand button', () => {
+  assert.equal(hostStub.revealPane, undefined)
+  const tree = floatingTree()
+  assert.equal(
+    walk(tree).some(node => node.props && node.props.className === 'sp-expand'),
+    false
+  )
 })
 
 // ---------------------------------------------------------------------------

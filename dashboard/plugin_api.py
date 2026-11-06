@@ -948,6 +948,13 @@ def build_snapshot(
                         "parent_id": row["parent_session_id"] or None,
                         "source": row["source"] or "",
                         "stalled": state == "stalled",
+                        # F8: "waiting for the user" is not a new state, it is
+                        # the honest reading of ``idle``: the turn ended and the
+                        # ball is in the user's court. The reason is the exact
+                        # activity line the row already exposes, so the panel
+                        # never invents copy.
+                        "waiting_for_user": state == "idle",
+                        "waiting_reason": activity if state == "idle" else "",
                         "can_interrupt": state in INTERRUPTIBLE_STATES,
                         "execution_generation": _as_generation(row["runtime_generation"]),
                         "delegating": _as_int(delegation["n"]) if delegation is not None else 0,
@@ -983,6 +990,11 @@ def build_snapshot(
 
     totals = {
         **per_state,
+        # Two aggregate readings the panel leads with: work in progress and
+        # turns that ended and now wait on the user. Every per-state key stays,
+        # so existing consumers are untouched.
+        "working": per_state["running"] + per_state["queued"],
+        "waiting": per_state["idle"],
         "live": sum(per_state[state] for state in LIVE_STATES),
         "dormant": len(dormant),
         "sessions": len(visible),
@@ -1141,13 +1153,19 @@ def _json_for_script(value: Any) -> str:
 
 
 @router.get("/view", response_class=HTMLResponse)
-def view(window: int = DEFAULT_WINDOW_S, profiles: str = "all", theme: str = "dark") -> Any:
+def view(
+    window: int = DEFAULT_WINDOW_S,
+    profiles: str = "all",
+    theme: str = "dark",
+    tab: str = "all",
+) -> Any:
     """Self-contained HTML mirror of ``/live`` (no CDN, no build step).
 
     The page never reflects the raw ``profiles`` query: it embeds the profile
     list that ``select_profiles()`` actually resolved, so an attacker-controlled
-    selector has nothing to interpolate. ``theme`` is validated against a closed
-    set for the same reason and only switches the palette.
+    selector has nothing to interpolate. ``theme`` and ``tab`` are validated
+    against closed sets for the same reason; neither raw value reaches the
+    markup.
     """
     try:
         window_s = max(MIN_WINDOW_S, min(MAX_WINDOW_S, int(window)))
@@ -1160,6 +1178,10 @@ def view(window: int = DEFAULT_WINDOW_S, profiles: str = "all", theme: str = "da
     palette = theme.strip().lower() if isinstance(theme, str) else "dark"
     if palette not in ("dark", "light"):
         palette = "dark"
+
+    selected_tab = tab.strip().lower() if isinstance(tab, str) else "all"
+    if selected_tab not in ("all", "working", "waiting", "problem"):
+        selected_tab = "all"
 
     # At most nine small PNGs (one per selected profile): inlining them makes
     # the page paint avatars without a second round-trip and keeps the headless
@@ -1185,6 +1207,7 @@ def view(window: int = DEFAULT_WINDOW_S, profiles: str = "all", theme: str = "da
         .replace("__WINDOW__", str(window_s))
         .replace("__REFRESH_MS__", str(int(WATCH_INTERVAL_S * 1000)))
         .replace("__THEME__", palette)
+        .replace("__TAB__", _json_for_script(selected_tab))
     )
     return HTMLResponse(content=html)
 
@@ -1312,6 +1335,7 @@ _VIEW_HTML = """<!doctype html>
   }
   .summary b { color: var(--text); font-weight: 600; }
   .summary .hot b { color: var(--warn); }
+  .summary .wait b { color: var(--amber); }
   .summary .calm b { color: var(--dim); }
   /* ---------- segments ---------- */
   .segs { display: flex; gap: 2px; padding: 8px 12px 0; }
@@ -1354,6 +1378,22 @@ _VIEW_HTML = """<!doctype html>
   .card.bad h2 { color: var(--warn); }
   .card.idle { background: var(--surface); }
   .card.idle h2 { color: var(--muted); font-weight: 500; }
+  /* F8: idle means "the turn ended and the user is awaited". Amber, not grey:
+     it must be findable at a glance, and red stays reserved for stalled/failed. */
+  .card.wait {
+    border-color: color-mix(in srgb, var(--amber) 38%, transparent);
+    border-left: 3px solid var(--amber);
+    background: color-mix(in srgb, var(--amber) 8%, var(--surface));
+  }
+  .card.wait h2 { color: var(--text); font-weight: 600; }
+  .badge {
+    flex: 0 0 auto;
+    font-family: var(--mono); font-size: 9px; line-height: 1.5;
+    color: var(--amber);
+    background: color-mix(in srgb, var(--amber) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--amber) 34%, transparent);
+    border-radius: 4px; padding: 0 4px;
+  }
   .card.done { opacity: .75; }
   .r1 { display: flex; align-items: center; gap: 9px; min-width: 0; }
   /* avatar: the profile's real PNG, clipped to its stored silhouette; the
@@ -1398,6 +1438,7 @@ _VIEW_HTML = """<!doctype html>
   .st.run span { display: block; animation: blink 1.4s infinite; }
   .st.q { color: var(--amber); font-size: 13px; }
   .st.bad { color: var(--red); font-size: 13px; }
+  .st.wait { color: var(--amber); font-size: 13px; }
   .st.ok { color: var(--green); font-size: 13px; }
   @keyframes blink {
     0%, 60%, 100% { opacity: .25; }
@@ -1492,7 +1533,8 @@ _VIEW_HTML = """<!doctype html>
 
   <nav class="segs" id="segs" aria-label="Filtrar sesiones">
     <button class="seg on" type="button" data-filter="all">Todas</button>
-    <button class="seg" type="button" data-filter="active">Activas</button>
+    <button class="seg" type="button" data-filter="working">Trabajando</button>
+    <button class="seg" type="button" data-filter="waiting">Esperan</button>
     <button class="seg" type="button" data-filter="problem">Problema</button>
   </nav>
 
@@ -1509,6 +1551,8 @@ _VIEW_HTML = """<!doctype html>
   const AVATARS = __AVATARS__;
   const WINDOW = __WINDOW__;
   const REFRESH = __REFRESH_MS__;
+  // Server-validated closed set (all|working|waiting|problem); never raw input.
+  const INITIAL_TAB = __TAB__;
   const LIVE_URL = new URL(
     'live?profiles=' + encodeURIComponent(PROFILES) + '&window=' + WINDOW,
     window.location.href
@@ -1528,7 +1572,7 @@ _VIEW_HTML = """<!doctype html>
     running: { label: 'corriendo', cls: 'run' },
     queued: { label: 'en cola', cls: 'queue' },
     stalled: { label: 'colgada', cls: 'bad' },
-    idle: { label: 'ociosa', cls: 'idle' },
+    idle: { label: 'espera', cls: 'idle wait' },
     done: { label: 'completada', cls: 'done' },
     failed: { label: 'fallida', cls: 'done' }
   };
@@ -1536,12 +1580,12 @@ _VIEW_HTML = """<!doctype html>
   const GLYPHS = {
     stalled: { cls: 'bad', glyph: '!', label: 'colgada' },
     queued: { cls: 'q', glyph: '◷', label: 'en cola' },
-    idle: { cls: '', glyph: '●', label: 'ociosa' },
+    idle: { cls: 'wait', glyph: '●', label: 'espera' },
     done: { cls: 'ok', glyph: '✓', label: 'completada' },
     failed: { cls: 'bad', glyph: '✗', label: 'fallida' }
   };
 
-  let filter = 'all';
+  let filter = INITIAL_TAB;
   let latest = null;
 
   function el(tag, cls, text) {
@@ -1674,6 +1718,7 @@ _VIEW_HTML = """<!doctype html>
     const body = el('div', 'rbody');
     const name = el('div', 'rname');
     name.appendChild(el('h2', null, session.title || session.id));
+    if (session.state === 'idle') name.appendChild(el('span', 'badge', 'espera'));
     body.appendChild(name);
 
     const metaLine = el('div', 'meta');
@@ -1716,8 +1761,11 @@ _VIEW_HTML = """<!doctype html>
   }
 
   function visibleSessions(sessions) {
-    if (filter === 'active') {
-      return sessions.filter(s => s.state !== 'done' && s.state !== 'failed');
+    if (filter === 'working') {
+      return sessions.filter(s => s.state === 'running' || s.state === 'queued');
+    }
+    if (filter === 'waiting') {
+      return sessions.filter(s => s.state === 'idle');
     }
     if (filter === 'problem') {
       return sessions.filter(s => s.state === 'stalled' || s.state === 'failed');
@@ -1739,10 +1787,13 @@ _VIEW_HTML = """<!doctype html>
       summaryEl.appendChild(item);
     };
     add(t.sessions, 'sesión', 'sesiones', null, true);
-    add(t.running, 'corriendo', 'corriendo');
-    add(t.queued, 'en cola', 'en cola');
+    // F8: lead with work in progress and turns waiting on the user. Both are
+    // derived from the per-state counters when an older payload omits them.
+    const working = t.working !== undefined ? t.working : (t.running || 0) + (t.queued || 0);
+    const waiting = t.waiting !== undefined ? t.waiting : (t.idle || 0);
+    add(working, 'trabajando', 'trabajando');
+    add(waiting, 'esperando', 'esperando', 'wait');
     add(t.stalled, 'colgada', 'colgadas', t.stalled ? 'hot' : null);
-    add(t.idle, 'ociosa', 'ociosas');
     add(t.dormant, 'inactiva', 'inactivas', 'calm');
 
     liveLabel.textContent = (t.live || 0) + ' live';
@@ -1754,13 +1805,15 @@ _VIEW_HTML = """<!doctype html>
     const sessions = Array.isArray(data.sessions) ? data.sessions : [];
     const counts = {
       all: sessions.length,
-      active: sessions.filter(s => s.state !== 'done' && s.state !== 'failed').length,
+      working: sessions.filter(s => s.state === 'running' || s.state === 'queued').length,
+      waiting: sessions.filter(s => s.state === 'idle').length,
       problem: sessions.filter(s => s.state === 'stalled' || s.state === 'failed').length
     };
-    const labels = { all: 'Todas', active: 'Activas', problem: 'Problema' };
+    const labels = { all: 'Todas', working: 'Trabajando', waiting: 'Esperan', problem: 'Problema' };
     segsEl.querySelectorAll('button[data-filter]').forEach(button => {
       const name = button.dataset.filter;
       button.textContent = labels[name] + ' (' + (counts[name] || 0) + ')';
+      button.classList.toggle('on', name === filter);
     });
   }
 
@@ -1802,8 +1855,11 @@ _VIEW_HTML = """<!doctype html>
       } else if (filter === 'problem') {
         empty.appendChild(el('strong', null, 'Nada colgado'));
         empty.appendChild(el('span', null, 'Ninguna sesión necesita atención'));
+      } else if (filter === 'waiting') {
+        empty.appendChild(el('strong', null, 'Nadie espera'));
+        empty.appendChild(el('span', null, 'Ningún turno esperando al usuario'));
       } else {
-        empty.appendChild(el('strong', null, 'Ninguna sesión activa'));
+        empty.appendChild(el('strong', null, 'Ninguna sesión trabajando'));
         empty.appendChild(el('span', null, dormant + ' inactivas'));
       }
       grid.appendChild(empty);

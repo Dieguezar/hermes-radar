@@ -2,9 +2,10 @@
 
 **htop for Hermes sessions.** A live, compact view of every Hermes session,
 across every profile: what the agent is doing right now, in which session and
-profile, with which model, for how long, and whether something is stuck. A
-floating panel stays in the corner of Hermes Desktop, and a hung turn can be
-stopped in two clicks.
+profile, with which model, for how long, whether it is **waiting for you**, and
+whether something is stuck. A floating card (S/M/L/XL, 320 × 214 by default)
+is the quick view; a resizable 380 px right side panel is the full, filterable
+view. A hung turn can be stopped in two clicks from either one.
 
 Radar keeps no history of its own: it reads the current state of each
 profile's `state.db` on every refresh.
@@ -14,8 +15,10 @@ profile's `state.db` on every refresh.
 > Real capture of the web mirror (`/view`), 2:1 (1200 × 600) for the catalog
 > `image:` field, 24 h window. The same page supports `?theme=light`
 > (`docs/view-light.png`); it is the same markup with the light token set.
-> The Desktop half renders the same payload in the floating 320 × 214 card,
-> with one compact row per session instead of the card grid.
+> The Desktop half renders the same payload twice: the floating card (S/M/L/XL)
+> is the quick view, and the 380 px right panel is the full panel with grouped
+> rows, filters and settings. `docs/view-waiting.png` is the same page with the
+> **Esperan** tab selected, so every amber «espera» row is on screen.
 
 ## What it does
 
@@ -32,9 +35,13 @@ profile's `state.db` on every refresh.
 * Paints the **real bot avatar**, not a generic initial: the same
   `assets/avatar.png` the Bots roster shows, clipped to the profile's stored
   silhouette, plus its `ui_meta['hermes-bots']` title, shape and color.
-* Ships a Desktop half (`desktop/plugin.js`): a 320 × 214 floating pane
-  (`placement: 'floating'`, anchored bottom-right) with one row per session, the
-  profile's real avatar, the current tool and a two-step stop.
+* Ships a Desktop half (`desktop/plugin.js`) with two panes:
+  * `radar` — the floating quick view (`placement: 'floating'`, anchored
+    bottom-right) at one of four sizes, S 320 × 214 by default, one compact row
+    per session.
+  * `radar:panel` — the full 380 px right panel (`placement: 'right'`) with
+    grouped rows, filter tabs, large counters, settings, row actions and the
+    profile's real avatar.
 * Emits `plugin.radar.changed` at most once every 2 s, and only when
   the visible snapshot changed.
 
@@ -45,44 +52,77 @@ profile's `state.db` on every refresh.
 | `running` | A turn lease is live, or an async delegation is still in flight. |
 | `stalled` | The lease expired while the session was active in the last 30 minutes, or an open row recorded a failing `end_reason` without an `ended_at`. Needs attention. |
 | `queued` | An admission is waiting in the queue for that session. |
-| `idle` | No live lease, but activity happened inside the requested window. Waiting on the user. |
+| `idle` | No live lease, but activity happened inside the requested window. Waiting on the user; painted amber as **espera**. |
 | `dormant` | No live lease and activity outside the window. Counted as `inactivas`, never listed. |
 | `done` / `failed` | The session has a terminal `end_reason` inside the window. |
 
 `dormant` is not `stalled`: an abandoned session from last week is history, not
 a hung turn now. Only a recent expired lease paints red.
 
-## The Desktop panel
+## The Desktop panes
 
-* Rows in panel order: `running` → `stalled` → `queued` → `idle`.
-  `done`, `failed` and `dormant` are not listed.
-* Click a row to open that session (`host.openSession`). The row itself is not
-  interactive: the title is a real `<button>`, and the stop control is a sibling
-  button, so keyboard focus is never ambiguous.
-* A running or stalled row exposes **parar**: the first click asks `¿seguro?`,
-  the second sends `session.interrupt`. The button stays mounted and is revealed
-  on hover or when anything in the row has keyboard focus (`:focus-within` /
-  `:focus-visible`); its width is reserved so the row never re-flows under the
-  pointer. Success shows `interrumpida` for 3 s; a gateway error is printed on
-  the row itself.
-* Before sending the interrupt, the panel re-reads `/live` and aborts when the
-  row disappeared, left `running`/`stalled`, or advanced to another
-  `execution_generation`. That is the real fence: `session.interrupt` does not
-  inspect generations itself.
+### Quick view — `radar` (floating, S/M/L/XL)
+
+* Header: `S · M · L · XL` (320 × 214, 420 × 300, 520 × 380, 620 × 460), the
+  active one highlighted and remembered as `radar.size`. The same header has a
+  `⤢` button that reveals the full side panel (`host.revealPane`, when the host
+  exposes it). Choosing a size re-registers the pane by id: same body, new
+  `width`/`height`.
+
+* One compact row per session in panel order: `running` → `stalled` → `queued`
+  → `idle` → `done` → `failed`. `dormant` is never listed.
+* Idle rows carry an amber **espera** badge and an amber left edge: the turn
+  ended and the user is awaited. Stalled rows stay red (`!`).
+* Footer: `N trabajando · M esperando · K colgadas` plus `hace Xs`, or
+  `sin conexión` when the last fetch failed (the previous snapshot stays on
+  screen). A profile that could not be read is named there too:
+  `sin conexión · <perfil>`.
+* Click a row to open that session (`host.openSession`). A running or stalled
+  row exposes **parar**: the first click asks `¿seguro?`, the second sends
+  `session.interrupt`.
+
+### Full panel — `radar:panel` (right, 380 px)
+
+* Tiles into the Desktop's **right sidebar** role: use the right-sidebar
+  toggle to show or hide it. It is the full panel; the floating card stays the
+  quick view.
+* Three large counters in the header: **trabajando**, **esperando** and
+  **colgadas**. `esperando` turns amber and `colgadas` red only when they are
+  above zero. Clicking a counter selects the matching filter.
+* Filter tabs **Todas · Trabajando · Esperan · Problema**, each with its count.
+  The chosen filter is stored as `radar.filter` and restored on mount.
+* Grouped list with a header and count per group: **Trabajando**
+  (`running` + `queued`), **Esperando** (`idle`), **Colgadas** (`stalled`) and
+  **Terminadas** (`done` + `failed`, hideable).
+* Every row shows the 30 px profile avatar, the session title, the
+  `profile_title` badge, the current tool/activity line, the last-activity time
+  (`hace …`, falling back to elapsed) and three actions: **open**, **parar**
+  (running/stalled only) and **copiar** the session id (`copiado` confirms for a
+  moment).
+* Settings in **Ajustes**, persisted through the verified `ctx.storage` API
+  under `radar.*`:
+  * Perfiles: `Todos` / `Solo el actual` (`radar.profiles`).
+  * Ventana: `1 min` / `3 min` / `10 min` (`radar.window`).
+  * Mostrar terminadas: sí / no (`radar.finished`).
+  * Densidad: compacta / cómoda (`radar.density`).
+  The panel requests `/live?profiles=all|current&window=60|180|600` from those
+  values.
+* Both panes share the stop fence: before sending the interrupt they re-read
+  `/live` with their current query and abort when the row disappeared, left
+  `running`/`stalled`, or advanced to another `execution_generation`. That is
+  the real fence: `session.interrupt` does not inspect generations itself.
 * Stalled rows say how long the heartbeat has been missing
   (`sin latido hace 12 min`), not just `sin latido`.
-* Footer: `N sesiones · M live` plus `hace Xs`, or `sin conexión` when the last
-  fetch failed (the previous snapshot stays on screen). A profile that could not
-  be read is named there too: `sin conexión · <perfil>`.
 * Every colour derives from the Desktop theme tokens (`--dt-foreground`,
   `--dt-muted-foreground`, `--dt-destructive`) through `color-mix()`, so the
-  avatar initial and the status dot stay legible in light and dark skins.
-* The pane refreshes every 2 s while it is mounted and listens to
-  `plugin.radar.changed` with a 500 ms debounce. It is deliberately
-  registered without `lifecycleKeepAlive`: collapsing the pane unmounts the
-  body, and the poll stops with it. `host.paneVisibility('radar')` is always
-  `false` for a floating pane (it is not in the layout tree), so it is not used
-  as a refresh gate.
+  avatar initial, the amber waiting state and the red stalled state stay
+  legible in light and dark skins.
+* Each pane refreshes every 2 s while it is mounted and listens to
+  `plugin.radar.changed` with a 500 ms debounce. Both are deliberately
+  registered without `lifecycleKeepAlive`: collapsing or closing a pane
+  unmounts the body, and the poll stops with it. `host.paneVisibility('radar')`
+  is always `false` for a floating pane (it is not in the layout tree), so it is
+  not used as a refresh gate.
 
 ## API
 
@@ -91,7 +131,7 @@ Mounted by the gateway under `/api/plugins/radar/`.
 | Endpoint | Description |
 | --- | --- |
 | `GET /live?profiles=all\|current\|<list>&window=180` | Snapshot JSON. `profiles` accepts `all`, `current` or a comma-separated list. `window` is seconds (15–86400). |
-| `GET /view?profiles=...&window=...&theme=dark\|light` | HTML mirror of the same view, refreshing every 2 s. The page embeds the profile list already resolved by `select_profiles()`, never the raw query, so the selector cannot inject markup. `theme` only switches the palette and is validated against that closed set. |
+| `GET /view?profiles=...&window=...&theme=dark\|light&tab=all\|working\|waiting\|problem` | HTML mirror of the same view, refreshing every 2 s. The page embeds the profile list already resolved by `select_profiles()`, never the raw query, so the selector cannot inject markup. `theme` only switches the palette; `tab` only selects the initial tab. Both are validated against closed sets. |
 | `GET /avatar/{profile}` | `{"data_url": "data:image/png;base64,..."}`, or `{"data_url": null}` when the profile has no image. Only names returned by `discover_profiles()` are served, the file is always `<profile>/assets/avatar.png` (`$HERMES_HOME/assets/avatar.png` for the root), the PNG signature is validated and files over 512 KB are refused. Unknown or traversal-shaped names return 404. |
 
 Example payload:
@@ -130,6 +170,8 @@ Example payload:
       "parent_id": null,
       "source": "desktop",
       "stalled": false,
+      "waiting_for_user": false,
+      "waiting_reason": "",
       "can_interrupt": true,
       "execution_generation": 4,
       "delegating": 0
@@ -137,7 +179,9 @@ Example payload:
   ],
   "totals": {
     "running": 1, "queued": 0, "stalled": 0, "idle": 4,
-    "done": 0, "failed": 0, "live": 1, "dormant": 7, "sessions": 5
+    "done": 0, "failed": 0,
+    "working": 1, "waiting": 4,
+    "live": 1, "dormant": 7, "sessions": 5
   }
 }
 ```
@@ -148,6 +192,13 @@ Example payload:
   `color` come from `ui_meta['hermes-bots']`; a missing color is derived from the
   profile name with the same 31-multiplier hue hash the Desktop SDK uses, and
   the root profile stays neutral. Both are cached by file `mtime`/size.
+* `waiting_for_user` is `true` exactly for `state === "idle"`: no lease is live
+  and the activity is inside the window, so the turn ended and the user is
+  awaited. `waiting_reason` carries that row's `activity` text (or `""` when
+  there is none) and is always `""` for every other state.
+* `totals.working` is `running + queued`; `totals.waiting` is `idle`. Every
+  per-state counter (`running`, `queued`, `stalled`, `done`, `failed`, `live`,
+  `dormant`, `sessions`) is unchanged.
 * `can_interrupt` is `true` for `running` and `stalled` only. A queued request is
   cancelled through the admission API, not interrupted.
 * `execution_generation` mirrors `sessions.runtime_generation` and is `null`

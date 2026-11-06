@@ -271,7 +271,8 @@ def test_states_are_classified() -> None:
         }, states
         assert snapshot["totals"] == {
             "running": 1, "queued": 1, "stalled": 1, "idle": 1,
-            "done": 1, "failed": 1, "live": 3, "dormant": 1, "sessions": 6,
+            "done": 1, "failed": 1, "working": 2, "waiting": 1,
+            "live": 3, "dormant": 1, "sessions": 6,
         }, snapshot["totals"]
 
         running = next(s for s in snapshot["sessions"] if s["id"] == "run")
@@ -587,6 +588,71 @@ def test_order_is_state_then_elapsed_descending() -> None:
         tmp.cleanup()
 
 
+def test_waiting_for_user_is_exactly_idle() -> None:
+    tmp, home = make_home()
+    try:
+        db = home / "state.db"
+        now = 1_800_000_000.0
+        add_session(
+            db, "idle", last_activity_at=now - 10,
+            last_activity_description="terminó el turno",
+        )
+        add_session(db, "run", last_activity_at=now - 10)
+        add_lease(db, "run", expires_at=now + 60, acquired_at=now - 40)
+        add_session(db, "queue", last_activity_at=now - 10)
+        add_queued_admission(db, "queue", "adm-wait")
+        add_session(db, "stall", last_activity_at=now - 30)
+        add_lease(db, "stall", expires_at=now - 5, acquired_at=now - 120)
+        add_session(
+            db, "done", last_activity_at=now - 10,
+            ended_at=now - 5, end_reason="agent_close",
+        )
+
+        snapshot = api.build_snapshot(home=home, profiles="default", window=180, now=now)
+        by_id = {item["id"]: item for item in snapshot["sessions"]}
+
+        assert by_id["idle"]["waiting_for_user"] is True
+        assert by_id["idle"]["waiting_reason"] == "terminó el turno"
+        for sid in ("run", "queue", "stall", "done"):
+            assert by_id[sid]["waiting_for_user"] is False, by_id[sid]
+            assert by_id[sid]["waiting_reason"] == "", by_id[sid]
+
+        # A waiting row with no activity text still points at the turn end.
+        add_session(db, "silent", last_activity_at=now - 10)
+        again = api.build_snapshot(home=home, profiles="default", window=180, now=now)
+        silent = next(item for item in again["sessions"] if item["id"] == "silent")
+        assert silent["waiting_for_user"] is True
+        assert silent["waiting_reason"] == "", silent
+    finally:
+        tmp.cleanup()
+
+
+def test_totals_expose_working_and_waiting() -> None:
+    tmp, home = make_home()
+    try:
+        db = home / "state.db"
+        now = 1_800_000_000.0
+        add_session(db, "run", last_activity_at=now - 10)
+        add_lease(db, "run", expires_at=now + 60, acquired_at=now - 40)
+        add_session(db, "queue", last_activity_at=now - 10)
+        add_queued_admission(db, "queue", "adm-totals")
+        add_session(db, "idle-a", last_activity_at=now - 10)
+        add_session(db, "idle-b", last_activity_at=now - 5)
+        add_session(db, "stall", last_activity_at=now - 30)
+        add_lease(db, "stall", expires_at=now - 5, acquired_at=now - 120)
+
+        snapshot = api.build_snapshot(home=home, profiles="default", window=180, now=now)
+        totals = snapshot["totals"]
+        assert totals["working"] == totals["running"] + totals["queued"]
+        assert totals["working"] == 2, totals
+        assert totals["waiting"] == totals["idle"]
+        assert totals["waiting"] == 2, totals
+        for key in ("running", "queued", "stalled", "done", "failed", "live", "dormant", "sessions"):
+            assert key in totals, key
+    finally:
+        tmp.cleanup()
+
+
 def test_read_only_uri_is_portable_and_survives_spaces() -> None:
     """``Path.as_uri()`` handles spaces/unicode and the Windows drive form."""
     tmp = tempfile.TemporaryDirectory(prefix="radar ")
@@ -858,7 +924,14 @@ def test_desktop_plugin_contract() -> None:
     # stale_generation, so the panel must fence with a fresh /live read.
     assert "stale_generation" not in code, "the retry described an API that does not exist"
     assert "cambió de turno" in code
-    assert "await ctx.rest(LIVE_PATH)" in code
+    assert "await ctx.rest(livePath)" in code
+    assert "function interruptSession(ctx, session, livePath" in code
+
+    # F8: the quick view stays floating and the full panel tiles right.
+    assert "id: 'radar'" in code
+    assert "id: 'radar:panel'" in code
+    assert "placement: 'right'" in code
+    assert "width: '380px'" in code
 
     # Finding 2/nit 19: a real open button plus a mounted, focusable stop button.
     assert ".sp-row:focus-within .sp-stop" in code
@@ -1002,6 +1075,32 @@ def test_view_surface_fixes_are_present() -> None:
 
     # 10: tabs carry their counts.
     assert "labels[name] + ' (' + (counts[name] || 0) + ')'" in html
+
+
+def test_view_exposes_waiting_and_validates_the_tab() -> None:
+    """F8: the waiting column is visible and ``tab`` is a validated closed set."""
+    waiting = _view_html(window=180, profiles="all", tab="waiting")
+    assert 'const INITIAL_TAB = "waiting";' in waiting
+    assert 'data-filter="waiting"' in waiting
+    assert 'data-filter="working"' in waiting
+    assert 'data-filter="problem"' in waiting
+    assert ">Esperan<" in waiting or "Esperan (" in waiting
+    assert "Trabajando" in waiting
+    assert "espera" in waiting
+    assert "trabajando" in waiting
+    assert "esperando" in waiting
+    # Idle cards carry the amber marker, not the red one.
+    assert ".card.wait" in waiting
+
+    for tab in ("all", "working", "waiting", "problem"):
+        html = _view_html(tab=tab)
+        assert f'const INITIAL_TAB = "{tab}";' in html, tab
+
+    injected = '"><script>window.__pwned=1</script>'
+    html = _view_html(tab=injected)
+    assert injected not in html
+    assert 'const INITIAL_TAB = "all";' in html
+    assert html.count("</script>") == 1
 
 
 def test_watcher_stops_after_idle_timeout() -> None:
