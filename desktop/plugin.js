@@ -285,10 +285,11 @@ async function interruptSession(ctx, session) {
   const current = normalizeGeneration(row.execution_generation)
   if (expected !== current) throw new Error('la sesión cambió de turno; vuelve a intentarlo')
 
-  const params = { session_id: session.id }
-  if (current !== null) params.execution_generation = current
-
-  const result = await sessionRpc(session, 'session.interrupt', params)
+  // The canonical wire contract for `session.interrupt` is a closed key set:
+  // `session_id` (+ the optional profile route). Sending `execution_generation`
+  // makes the gateway answer 4001 `invalid_params` before the handler runs, so
+  // the fence stays client-side: we already re-read `/live` and compared above.
+  const result = await sessionRpc(session, 'session.interrupt', { session_id: session.id })
   if (result && (result.status === 'not_interrupted' || result.interrupted === false)) {
     throw new Error('el gateway no interrumpió el turno')
   }

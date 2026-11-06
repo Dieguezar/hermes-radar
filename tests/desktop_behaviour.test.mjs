@@ -140,7 +140,7 @@ test('interrupt aborts before the RPC when the generation moved', async () => {
   assert.equal(calls.length, 0, 'the RPC must not fire for a stale row')
 })
 
-test('interrupt sends the generation it just re-read', async () => {
+test('interrupt sends only session_id: the wire contract is a closed key set', async () => {
   const calls = []
   hostStub.request = async (method, params) => {
     calls.push({ method, params })
@@ -150,7 +150,7 @@ test('interrupt sends the generation it just re-read', async () => {
 
   await mod.interruptSession(ctx, freshRow({ execution_generation: 7 }))
   assert.deepEqual(calls, [
-    { method: 'session.interrupt', params: { session_id: 's1', execution_generation: 7 } }
+    { method: 'session.interrupt', params: { session_id: 's1' } }
   ])
 })
 
