@@ -9,6 +9,6 @@ venv/
 .DS_Store
 node_modules/
 # agent scratch
-a\.atl/
+.atl/
 odd/
 
