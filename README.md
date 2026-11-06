@@ -35,13 +35,21 @@ profile's `state.db` on every refresh.
 * Paints the **real bot avatar**, not a generic initial: the same
   `assets/avatar.png` the Bots roster shows, clipped to the profile's stored
   silhouette, plus its `ui_meta['hermes-bots']` title, shape and color.
-* Ships a Desktop half (`desktop/plugin.js`) with two panes:
+* Ships a Desktop half (`desktop/plugin.js`) with three integrated surfaces plus Always-on-Top:
   * `radar` — the floating quick view (`placement: 'floating'`, anchored
     bottom-right) at one of four sizes, S 320 × 214 by default, one compact row
     per session.
   * `radar:panel` — the full 380 px right panel (`placement: 'right'`) with
     grouped rows, filter tabs, large counters, settings, row actions and the
     profile's real avatar.
+  * `nav` (`sidebar.nav`) + `page` (`routes` at `/radar`) — **Left Sidebar**
+    navigation entry (`Radar` with `pulse` icon) that opens a full-page
+    multi-column Radar workspace with instant search, counters, and right-click
+    *Open in split* support.
+  * **📌 Siempre encima (Always-on-Top Picture-in-Picture)** — 1-click native
+    Chromium Picture-in-Picture mini-window (`canvas.captureStream` →
+    `video.requestPictureInPicture()`) that floats on top of all OS windows even
+    when Hermes Desktop is minimized.
 * Emits `plugin.radar.changed` at most once every 2 s, and only when
   the visible snapshot changed.
 
@@ -297,9 +305,11 @@ Radar registers no tools, hooks, middleware or commands.
 
 * **No history.** Radar persists nothing; closing the panel loses the
   view.
-* **It does not float above a minimized app.** `placement: 'floating'` is a
-  renderer-level card above the workspace; minimizing Hermes to the OS hides
-  the window and the panel with it. It is not an always-on-top OS window.
+* **Floating pane vs. Always-on-Top PiP.** `placement: 'floating'` is a
+  renderer-level card inside the Hermes workspace; minimizing Hermes to the OS
+  hides that card. To keep watching sessions while Hermes is minimized, click
+  **📌 Siempre encima** (`sp-pip`) in any Radar surface (or `/view`) to pop out
+  the native Chromium Picture-in-Picture Always-on-Top overlay window.
 * **`placement: 'floating'` is not in the public SDK doc.** The renderer
   implements it (`floating-panes.tsx`) and the type is exported
   (`sdk/index.ts`), and `hermes plugins validate` accepts it, but a public

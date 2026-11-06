@@ -933,6 +933,16 @@ def test_desktop_plugin_contract() -> None:
     assert "placement: 'right'" in code
     assert "width: '380px'" in code
 
+    # F10: left sidebar navigation ('sidebar.nav'), full route ('routes' at '/radar'),
+    # command palette ('palette') and Always-on-Top Picture-in-Picture.
+    assert "SIDEBAR_NAV_AREA = 'sidebar.nav'" in code
+    assert "ROUTES_AREA = 'routes'" in code
+    assert "RADAR_ROUTE = '/radar'" in code
+    assert "codicon: 'pulse'" in code
+    assert "requestPictureInPicture" in code
+    assert "function renderRadarPipCanvas(" in code
+    assert "async function toggleRadarPip(" in code
+
     # Finding 2/nit 19: a real open button plus a mounted, focusable stop button.
     assert ".sp-row:focus-within .sp-stop" in code
     assert "role: 'button'" not in code

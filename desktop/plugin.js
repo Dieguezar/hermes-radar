@@ -26,7 +26,12 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'radar'
 const PLUGIN_NAME = 'Radar'
-const VERSION = '0.6.0'
+const VERSION = '0.7.0'
+
+const SIDEBAR_NAV_AREA = 'sidebar.nav'
+const ROUTES_AREA = 'routes'
+const PALETTE_AREA = 'palette'
+const RADAR_ROUTE = '/radar'
 
 const LIVE_PATH = '/live?profiles=all&window=180'
 const REFRESH_MS = 2000
@@ -202,6 +207,11 @@ function expandRadarPanel() {
   if (typeof host.revealPane === 'function') host.revealPane(PANEL_PANE_TARGET)
 }
 
+/** Navigate to the full-page `/radar` route registered in the left sidebar. */
+function openRadarPage() {
+  if (typeof host.navigate === 'function') host.navigate(RADAR_ROUTE)
+}
+
 function livePathFor(settings) {
   const source = settings && typeof settings === 'object' ? settings : {}
   const profiles = source.profiles === 'current' ? 'current' : 'all'
@@ -312,8 +322,8 @@ const ANIMATION_CSS =
   'color:inherit;font:inherit;text-align:left;cursor:pointer;min-width:0;' +
   'display:flex;align-items:center;gap:9px;flex:1}' +
   '.sp-open:focus-visible{outline:2px solid ' + ORANGE + ';outline-offset:-2px;border-radius:6px}' +
-  '.sp-size:not(.sp-size-on):hover,.sp-expand:hover{border-color:' + MUTED + '!important}' +
-  '.sp-size:focus-visible,.sp-expand:focus-visible{outline:2px solid ' + ORANGE + ';outline-offset:1px}'
+  '.sp-size:not(.sp-size-on):hover,.sp-expand:hover,.sp-pip:not(.sp-pip-on):hover,.sp-page:hover{border-color:' + MUTED + '!important}' +
+  '.sp-size:focus-visible,.sp-expand:focus-visible,.sp-pip:focus-visible,.sp-page:focus-visible{outline:2px solid ' + ORANGE + ';outline-offset:1px}'
 
 const AVATARS = [
   {
@@ -405,10 +415,24 @@ function shapeOf(shape, key) {
 // matter how many rows share it or how often the 2 s poll re-renders the list.
 const AVATAR_CACHE = new Map()
 const AVATAR_INFLIGHT = new Map()
+const AVATAR_IMAGES = new Map()
 
 function cachedAvatar(profile) {
   const key = String(profile || 'default').trim() || 'default'
   return AVATAR_CACHE.has(key) ? AVATAR_CACHE.get(key) : undefined
+}
+
+function rememberAvatarImage(key, url) {
+  if (!url || AVATAR_IMAGES.has(key)) return
+  if (typeof Image === 'function') {
+    try {
+      const img = new Image()
+      img.src = url
+      AVATAR_IMAGES.set(key, img)
+    } catch (_error) {
+      // Headless test harnesses without Image still cache the data URL.
+    }
+  }
 }
 
 function loadAvatar(ctx, profile) {
@@ -427,6 +451,7 @@ function loadAvatar(ctx, profile) {
           ? payload.data_url
           : null
       AVATAR_CACHE.set(key, url)
+      if (url) rememberAvatarImage(key, url)
       return url
     })
     .catch(() => {
@@ -678,6 +703,403 @@ function activityFor(session, now = Date.now()) {
   return { text: '', warn: false }
 }
 
+// ---------------------------------------------------------------------------
+// Always-on-Top mini-window (Native Chromium Picture-in-Picture)
+// ---------------------------------------------------------------------------
+
+const PIP_WIDTH = 720
+const PIP_HEIGHT = 450
+
+const PIP_STATE = {
+  canvas: null,
+  video: null,
+  stream: null,
+  timer: 0,
+  active: false,
+  ctx: null,
+  lastSnapshot: null,
+  listeners: new Set()
+}
+
+function isRadarPipActive() {
+  if (
+    typeof document !== 'undefined' &&
+    document &&
+    document.pictureInPictureElement &&
+    PIP_STATE.video &&
+    document.pictureInPictureElement === PIP_STATE.video
+  ) {
+    return true
+  }
+  return Boolean(PIP_STATE.active)
+}
+
+function subscribeRadarPip(listener) {
+  if (typeof listener !== 'function') return () => {}
+  PIP_STATE.listeners.add(listener)
+  return () => {
+    PIP_STATE.listeners.delete(listener)
+  }
+}
+
+function notifyRadarPip() {
+  const active = isRadarPipActive()
+  for (const listener of PIP_STATE.listeners) {
+    try {
+      listener(active)
+    } catch (_error) {
+      // A listener error must not break the PiP state machine.
+    }
+  }
+}
+
+function clipText(text, maxChars) {
+  const raw = String(text || '').trim()
+  if (raw.length <= maxChars) return raw
+  return raw.slice(0, Math.max(1, maxChars - 1)) + '…'
+}
+
+function fillRoundedRect(g, x, y, w, h, r, fill, stroke) {
+  g.beginPath()
+  if (typeof g.roundRect === 'function') {
+    g.roundRect(x, y, w, h, r)
+  } else if (typeof g.rect === 'function') {
+    g.rect(x, y, w, h)
+  }
+  if (fill) {
+    g.fillStyle = fill
+    g.fill()
+  }
+  if (stroke) {
+    g.strokeStyle = stroke
+    g.lineWidth = 1
+    g.stroke()
+  }
+}
+
+/**
+ * Paint the live Radar mini-card onto a 2x canvas for Picture-in-Picture.
+ * Chromium streams this canvas into an OS-level Always-on-Top overlay window
+ * (`VideoOverlayWindowViews`) that stays visible even when Hermes is minimized.
+ */
+function renderRadarPipCanvas(canvas, snapshot, now = Date.now()) {
+  if (!canvas || typeof canvas.getContext !== 'function') return null
+  if (canvas.width !== PIP_WIDTH) canvas.width = PIP_WIDTH
+  if (canvas.height !== PIP_HEIGHT) canvas.height = PIP_HEIGHT
+
+  const g = canvas.getContext('2d')
+  if (!g) return null
+
+  const data = snapshot && typeof snapshot === 'object' ? snapshot : {}
+  const totals = data.totals && typeof data.totals === 'object' ? data.totals : {}
+  const workingCount =
+    totals.working !== undefined ? totals.working : (totals.running || 0) + (totals.queued || 0)
+  const waitingCount = totals.waiting !== undefined ? totals.waiting : totals.idle || 0
+  const stalledCount = totals.stalled || 0
+
+  const rows = (Array.isArray(data.sessions) ? data.sessions : [])
+    .filter(session => LISTED_STATES.includes(session.state))
+    .sort(
+      (left, right) =>
+        (STATE_ORDER[left.state] ?? 9) - (STATE_ORDER[right.state] ?? 9) ||
+        (right.elapsed_s || 0) - (left.elapsed_s || 0)
+    )
+
+  // Surface background & top Hermes orange bar
+  g.fillStyle = '#0d1117'
+  g.fillRect(0, 0, PIP_WIDTH, PIP_HEIGHT)
+  g.fillStyle = ORANGE
+  g.fillRect(0, 0, PIP_WIDTH, 4)
+
+  // Header bar
+  fillRoundedRect(g, 16, 14, 28, 28, 6, ORANGE, null)
+  g.fillStyle = '#1a0700'
+  g.font = '800 13px system-ui, sans-serif'
+  g.fillText('RD', 20, 33)
+
+  g.fillStyle = '#e6edf3'
+  g.font = '700 16px system-ui, sans-serif'
+  g.fillText('Radar · Siempre encima', 54, 33)
+
+  const statusText = stalledCount
+    ? '! ' + stalledCount + (stalledCount === 1 ? ' colgada' : ' colgadas')
+    : waitingCount
+      ? '● ' + waitingCount + ' esperando'
+      : '● ' + workingCount + ' en vivo'
+  const statusBg = stalledCount ? '#3d1518' : waitingCount ? '#382a10' : '#122d1f'
+  const statusFg = stalledCount ? '#f85149' : waitingCount ? AMBER_HUE : GREEN_HUE
+  fillRoundedRect(g, PIP_WIDTH - 166, 15, 150, 26, 13, statusBg, statusFg)
+  g.fillStyle = statusFg
+  g.font = '600 12px ui-monospace, monospace'
+  g.fillText(clipText(statusText, 18), PIP_WIDTH - 154, 32)
+
+  // Three metric counters
+  const cards = [
+    { label: 'TRABAJANDO', value: String(workingCount), color: workingCount ? GREEN_HUE : '#e6edf3' },
+    { label: 'ESPERANDO', value: String(waitingCount), color: waitingCount ? AMBER_HUE : '#9aa4af' },
+    { label: 'COLGADAS', value: String(stalledCount), color: stalledCount ? '#f85149' : '#9aa4af' }
+  ]
+  const cardW = 222
+  cards.forEach((card, index) => {
+    const x = 16 + index * (cardW + 11)
+    fillRoundedRect(g, x, 50, cardW, 52, 8, '#161b22', '#30363d')
+    g.fillStyle = card.color
+    g.font = '700 22px system-ui, sans-serif'
+    g.fillText(card.value, x + 14, 78)
+    g.fillStyle = '#9aa4af'
+    g.font = '600 11px ui-monospace, monospace'
+    g.fillText(card.label, x + 56, 75)
+  })
+
+  // Session rows (up to 5)
+  const visibleRows = rows.slice(0, 5)
+  if (!visibleRows.length) {
+    fillRoundedRect(g, 16, 114, PIP_WIDTH - 32, 294, 10, '#161b22', '#21262d')
+    g.fillStyle = '#e6edf3'
+    g.font = '600 16px system-ui, sans-serif'
+    g.fillText('Ninguna sesión activa en la ventana', 215, 252)
+    g.fillStyle = '#9aa4af'
+    g.font = '500 13px ui-monospace, monospace'
+    g.fillText((totals.dormant || 0) + ' inactivas fuera de la ventana', 248, 278)
+  } else {
+    visibleRows.forEach((session, idx) => {
+      const y = 114 + idx * 59
+      const stalled = session.state === 'stalled'
+      const waiting = session.state === 'idle'
+      const running = session.state === 'running'
+      const rowBg = stalled ? '#291417' : waiting ? '#261f12' : '#161b22'
+      const rowBorder = stalled ? '#f85149' : waiting ? AMBER_HUE : '#21262d'
+      fillRoundedRect(g, 16, y, PIP_WIDTH - 32, 53, 8, rowBg, rowBorder)
+
+      const stripe = stalled ? '#f85149' : waiting ? AMBER_HUE : running ? GREEN_HUE : '#30363d'
+      fillRoundedRect(g, 16, y, 5, 53, 3, stripe, null)
+
+      const profileKey = String(session.profile || 'default').trim() || 'default'
+      const avatarInfo = session.avatar && typeof session.avatar === 'object' ? session.avatar : {}
+      const avatarColor =
+        typeof avatarInfo.color === 'string' && /^#[0-9a-f]{6}$/i.test(avatarInfo.color)
+          ? avatarInfo.color
+          : ORANGE
+      const ax = 30
+      const ay = y + 9
+      fillRoundedRect(g, ax, ay, 35, 35, 8, avatarColor, null)
+
+      const img = AVATAR_IMAGES.get(profileKey)
+      let drewImage = false
+      if (img && img.complete !== false && typeof g.drawImage === 'function') {
+        try {
+          g.drawImage(img, ax, ay, 35, 35)
+          drewImage = true
+        } catch (_error) {
+          drewImage = false
+        }
+      }
+      if (!drewImage) {
+        const initial =
+          String(session.profile_title || session.profile_label || profileKey)
+            .trim()
+            .charAt(0)
+            .toUpperCase() || '?'
+        g.fillStyle = '#ffffff'
+        g.font = '700 15px system-ui, sans-serif'
+        g.fillText(initial, ax + 11, ay + 23)
+      }
+
+      // Title + profile badge
+      g.fillStyle = '#e6edf3'
+      g.font = '600 14px system-ui, sans-serif'
+      g.fillText(clipText(session.title || session.id, 38), 76, y + 23)
+
+      const act = activityFor(session, now)
+      const subParts = []
+      if (session.profile_title || session.profile_label || session.profile) {
+        subParts.push(String(session.profile_title || session.profile_label || session.profile))
+      }
+      if (session.tool) subParts.push(String(session.tool))
+      if (act.text) subParts.push(act.text)
+      g.fillStyle = stalled ? '#f85149' : waiting ? AMBER_HUE : '#9aa4af'
+      g.font = '500 12px ui-monospace, monospace'
+      g.fillText(clipText(subParts.join(' · ') || session.state, 52), 76, y + 42)
+
+      // Right state badge + age
+      const badgeLabel = stalled
+        ? '! COLGADA'
+        : waiting
+          ? 'ESPERA'
+          : running
+            ? '● ACTIVA'
+            : session.state === 'queued'
+              ? '◷ COLA'
+              : session.state === 'done'
+                ? '✓ LISTA'
+                : '✕ FALLÓ'
+      const badgeColor = stalled
+        ? '#f85149'
+        : waiting || session.state === 'queued'
+          ? AMBER_HUE
+          : running || session.state === 'done'
+            ? GREEN_HUE
+            : '#f85149'
+      g.fillStyle = badgeColor
+      g.font = '700 11px ui-monospace, monospace'
+      g.fillText(badgeLabel, PIP_WIDTH - 116, y + 23)
+
+      const when = session.last_activity_at
+        ? fmtAgo(session.last_activity_at, now)
+        : Math.max(0, Math.round(Number(session.elapsed_s) || 0)) + ' s'
+      g.fillStyle = '#7d8590'
+      g.font = '500 11px ui-monospace, monospace'
+      g.fillText(when, PIP_WIDTH - 116, y + 42)
+    })
+  }
+
+  // Footer
+  const age = data.generated_at ? Math.max(0, Math.floor(now / 1000) - Number(data.generated_at)) : 0
+  g.fillStyle = '#7d8590'
+  g.font = '500 11px ui-monospace, monospace'
+  g.fillText(
+    'Ventana ' + (data.window_s || 180) + 's · Minimiza Hermes y esta ventana seguirá siempre visible',
+    16,
+    436
+  )
+  g.fillText('hace ' + age + 's', PIP_WIDTH - 78, 436)
+
+  return {
+    workingCount,
+    waitingCount,
+    stalledCount,
+    rowCount: visibleRows.length
+  }
+}
+
+function stopRadarPipLoop() {
+  if (PIP_STATE.timer) {
+    clearInterval(PIP_STATE.timer)
+    PIP_STATE.timer = 0
+  }
+  PIP_STATE.active = false
+  notifyRadarPip()
+}
+
+function updateRadarPipSnapshot(ctx, snapshot) {
+  if (ctx) PIP_STATE.ctx = ctx
+  if (!snapshot || typeof snapshot !== 'object') return
+  PIP_STATE.lastSnapshot = snapshot
+  const sessions = Array.isArray(snapshot.sessions) ? snapshot.sessions : []
+  for (const session of sessions) {
+    if (session && session.avatar && session.avatar.has_image && session.profile) {
+      loadAvatar(ctx, session.profile)
+    }
+  }
+  if (PIP_STATE.canvas && isRadarPipActive()) {
+    renderRadarPipCanvas(PIP_STATE.canvas, snapshot, Date.now())
+  }
+}
+
+async function toggleRadarPip(ctx, snapshot) {
+  if (ctx) PIP_STATE.ctx = ctx
+  if (snapshot && typeof snapshot === 'object') PIP_STATE.lastSnapshot = snapshot
+
+  if (typeof document === 'undefined' || !document || typeof document.createElement !== 'function') {
+    return false
+  }
+
+  if (isRadarPipActive()) {
+    try {
+      if (document.pictureInPictureElement && typeof document.exitPictureInPicture === 'function') {
+        await document.exitPictureInPicture()
+      }
+    } catch (_error) {
+      // Closing PiP is idempotent.
+    }
+    stopRadarPipLoop()
+    return false
+  }
+
+  try {
+    if (!PIP_STATE.lastSnapshot && PIP_STATE.ctx && typeof PIP_STATE.ctx.rest === 'function') {
+      try {
+        PIP_STATE.lastSnapshot = await PIP_STATE.ctx.rest(LIVE_PATH)
+      } catch (_error) {
+        // Proceed with an empty snapshot; the interval will populate it.
+      }
+    }
+
+    if (!PIP_STATE.canvas) {
+      PIP_STATE.canvas = document.createElement('canvas')
+      PIP_STATE.canvas.width = PIP_WIDTH
+      PIP_STATE.canvas.height = PIP_HEIGHT
+    }
+    renderRadarPipCanvas(PIP_STATE.canvas, PIP_STATE.lastSnapshot || {}, Date.now())
+
+    if (!PIP_STATE.video) {
+      const video = document.createElement('video')
+      video.muted = true
+      video.playsInline = true
+      video.setAttribute('aria-hidden', 'true')
+      video.style.position = 'fixed'
+      video.style.width = '1px'
+      video.style.height = '1px'
+      video.style.opacity = '0'
+      video.style.pointerEvents = 'none'
+      video.style.bottom = '0'
+      video.style.right = '0'
+      if (typeof video.addEventListener === 'function') {
+        video.addEventListener('leavepictureinpicture', () => {
+          stopRadarPipLoop()
+        })
+      }
+      if (document.body && typeof document.body.appendChild === 'function') {
+        document.body.appendChild(video)
+      }
+      PIP_STATE.video = video
+    }
+
+    if (!PIP_STATE.stream && typeof PIP_STATE.canvas.captureStream === 'function') {
+      PIP_STATE.stream = PIP_STATE.canvas.captureStream(2)
+      PIP_STATE.video.srcObject = PIP_STATE.stream
+    }
+
+    if (typeof PIP_STATE.video.play === 'function') {
+      await PIP_STATE.video.play()
+    }
+    if (typeof PIP_STATE.video.requestPictureInPicture !== 'function') {
+      throw new Error('Picture-in-Picture no está disponible en este entorno')
+    }
+    await PIP_STATE.video.requestPictureInPicture()
+    PIP_STATE.active = true
+    notifyRadarPip()
+
+    if (PIP_STATE.timer) clearInterval(PIP_STATE.timer)
+    PIP_STATE.timer = setInterval(async () => {
+      if (!isRadarPipActive()) {
+        stopRadarPipLoop()
+        return
+      }
+      if (PIP_STATE.ctx && typeof PIP_STATE.ctx.rest === 'function') {
+        try {
+          const fresh = await PIP_STATE.ctx.rest(LIVE_PATH)
+          updateRadarPipSnapshot(PIP_STATE.ctx, fresh)
+          return
+        } catch (_error) {
+          // Redraw with the last known snapshot so the clock keeps ticking.
+        }
+      }
+      if (PIP_STATE.canvas) {
+        renderRadarPipCanvas(PIP_STATE.canvas, PIP_STATE.lastSnapshot || {}, Date.now())
+      }
+    }, REFRESH_MS)
+
+    return true
+  } catch (error) {
+    stopRadarPipLoop()
+    if (typeof host.notify === 'function') {
+      host.notify({ kind: 'error', message: 'No se pudo activar Siempre encima: ' + messageOf(error) })
+    }
+    return false
+  }
+}
+
 function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
   const [hovered, setHovered] = useState(false)
   const stalled = session.state === 'stalled'
@@ -895,6 +1317,7 @@ function RadarPane({ ctx }) {
   const [offline, setOffline] = useState(false)
   const [stopping, setStopping] = useState({})
   const [size, setSize] = useState(() => storedSize(ctx))
+  const [pipActive, setPipActive] = useState(() => isRadarPipActive())
   const mounted = useRef(true)
   const debounce = useRef(0)
 
@@ -904,6 +1327,7 @@ function RadarPane({ ctx }) {
       if (!mounted.current) return
       setSnapshot(data)
       setOffline(false)
+      updateRadarPipSnapshot(ctx, data)
     } catch (_error) {
       if (!mounted.current) return
       // Keep the last good picture and say so in the footer.
@@ -917,6 +1341,9 @@ function RadarPane({ ctx }) {
     // The interval belongs to the mounted component: collapsing the floating
     // pane unmounts it, and the poll stops with it (no lifecycleKeepAlive).
     const interval = setInterval(load, REFRESH_MS)
+    const offPip = subscribeRadarPip(active => {
+      if (mounted.current) setPipActive(active)
+    })
     const off = host.onEvent('plugin.radar.changed', () => {
       if (debounce.current) clearTimeout(debounce.current)
       debounce.current = setTimeout(() => {
@@ -928,6 +1355,7 @@ function RadarPane({ ctx }) {
       mounted.current = false
       clearInterval(interval)
       if (debounce.current) clearTimeout(debounce.current)
+      if (typeof offPip === 'function') offPip()
       if (typeof off === 'function') off()
     }
   }, [load])
@@ -1077,6 +1505,62 @@ function RadarPane({ ctx }) {
             )
           ),
           jsx('span', { style: { flex: 1 } }),
+          jsx(
+            'button',
+            {
+              type: 'button',
+              className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
+              'aria-pressed': pipActive ? 'true' : 'false',
+              'aria-label': 'siempre encima',
+              title: 'Siempre encima (Picture-in-Picture al minimizar)',
+              onClick: () => {
+                toggleRadarPip(ctx, snapshot)
+              },
+              children: '📌',
+              style: {
+                appearance: 'none',
+                height: '16px',
+                padding: '0 4px',
+                border: '1px solid ' + (pipActive ? ORANGE : BORDER),
+                borderRadius: '4px',
+                background:
+                  pipActive ? 'color-mix(in srgb, ' + ORANGE + ' 16%, transparent)' : 'transparent',
+                color: pipActive ? FG : MUTED,
+                fontFamily: MONO,
+                fontSize: '10px',
+                lineHeight: 1,
+                cursor: 'pointer'
+              }
+            },
+            'pip'
+          ),
+          typeof host.navigate === 'function'
+            ? jsx(
+                'button',
+                {
+                  type: 'button',
+                  className: 'sp-page',
+                  'aria-label': 'abrir vista completa',
+                  title: 'Abrir Radar en vista completa (/radar)',
+                  onClick: openRadarPage,
+                  children: '⊞',
+                  style: {
+                    appearance: 'none',
+                    height: '16px',
+                    padding: '0 4px',
+                    border: '1px solid ' + BORDER,
+                    borderRadius: '4px',
+                    background: 'transparent',
+                    color: MUTED,
+                    fontFamily: MONO,
+                    fontSize: '10.5px',
+                    lineHeight: 1,
+                    cursor: 'pointer'
+                  }
+                },
+                'page'
+              )
+            : null,
           typeof host.revealPane === 'function'
             ? jsx(
                 'button',
@@ -1458,12 +1942,14 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
  * floating card stays the quick view. Like the quick view, it owns its interval
  * and its `plugin.radar.changed` subscription: no `lifecycleKeepAlive`.
  */
-function RadarPanel({ ctx }) {
+function RadarPanel({ ctx, fullPage = false }) {
   const [snapshot, setSnapshot] = useState(null)
   const [settings, setSettings] = useState(DEFAULT_SETTINGS)
   const [offline, setOffline] = useState(false)
   const [stopping, setStopping] = useState({})
   const [copied, setCopied] = useState({})
+  const [pipActive, setPipActive] = useState(() => isRadarPipActive())
+  const [query, setQuery] = useState('')
   const mounted = useRef(true)
   const debounce = useRef(0)
   const settingsRef = useRef(settings)
@@ -1475,6 +1961,7 @@ function RadarPanel({ ctx }) {
       if (!mounted.current) return
       setSnapshot(data)
       setOffline(false)
+      updateRadarPipSnapshot(ctx, data)
     } catch (_error) {
       if (!mounted.current) return
       setOffline(true)
@@ -1507,6 +1994,9 @@ function RadarPanel({ ctx }) {
 
     load()
     const interval = setInterval(load, REFRESH_MS)
+    const offPip = subscribeRadarPip(active => {
+      if (mounted.current) setPipActive(active)
+    })
     const off = host.onEvent('plugin.radar.changed', () => {
       if (debounce.current) clearTimeout(debounce.current)
       debounce.current = setTimeout(() => {
@@ -1519,6 +2009,7 @@ function RadarPanel({ ctx }) {
       mounted.current = false
       clearInterval(interval)
       if (debounce.current) clearTimeout(debounce.current)
+      if (typeof offPip === 'function') offPip()
       if (typeof off === 'function') off()
     }
   }, [ctx, load])
@@ -1622,7 +2113,28 @@ function RadarPanel({ ctx }) {
         (session.state === 'failed' && settings.finished !== false)
     ).length
   }
-  const visible = sessionsForFilter(sessions, settings.filter)
+  const trimmedQuery = String(query || '').trim().toLowerCase()
+  const filteredByQuery = trimmedQuery
+    ? sessions.filter(session => {
+        const hay = [
+          session.title,
+          session.id,
+          session.profile_title,
+          session.profile_label,
+          session.profile,
+          session.tool,
+          session.activity,
+          session.model,
+          session.git_branch
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase()
+        return hay.includes(trimmedQuery)
+      })
+    : sessions
+
+  const visible = sessionsForFilter(filteredByQuery, settings.filter)
   // Only non-empty groups are painted: the header counters already carry the
   // zero counts, and a filtered view should not spend its height on empties.
   const groups = panelGroups(visible, settings).filter(group => group.items.length > 0)
@@ -1676,13 +2188,121 @@ function RadarPanel({ ctx }) {
     },
     children: [
       jsx('style', { children: ANIMATION_CSS }),
+      fullPage
+        ? jsxs('div', {
+            className: 'sp-page-head',
+            style: {
+              flex: '0 0 auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              flexWrap: 'wrap',
+              padding: '12px 14px 10px',
+              borderBottom: '1px solid ' + BORDER
+            },
+            children: [
+              jsxs('div', {
+                style: { display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 },
+                children: [
+                  jsx('span', {
+                    'aria-hidden': true,
+                    style: {
+                      width: '22px',
+                      height: '22px',
+                      borderRadius: '6px',
+                      background: ORANGE,
+                      color: ACCENT_INK,
+                      fontFamily: MONO,
+                      fontSize: '10px',
+                      fontWeight: 800,
+                      display: 'grid',
+                      placeItems: 'center'
+                    },
+                    children: 'RD'
+                  }),
+                  jsx('span', {
+                    style: { fontSize: '15px', fontWeight: 700, letterSpacing: '.2px' },
+                    children: 'Radar'
+                  })
+                ]
+              }),
+              jsx('input', {
+                type: 'search',
+                value: query,
+                'aria-label': 'buscar sesiones',
+                placeholder: 'Filtrar por sesión, herramienta, perfil, modelo o rama…',
+                onChange: event => setQuery(event.target.value),
+                style: {
+                  flex: '1 1 200px',
+                  minWidth: '140px',
+                  maxWidth: '380px',
+                  padding: '4px 8px',
+                  border: '1px solid ' + BORDER,
+                  borderRadius: '6px',
+                  background: 'transparent',
+                  color: FG,
+                  fontFamily: SANS,
+                  fontSize: '11.5px'
+                }
+              }),
+              jsx('span', { style: { flex: 1 } }),
+              jsx('button', {
+                type: 'button',
+                className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
+                'aria-pressed': pipActive ? 'true' : 'false',
+                'aria-label': 'siempre encima',
+                title: 'Mantener mini-ventana siempre encima aunque minimices Hermes',
+                onClick: () => {
+                  toggleRadarPip(ctx, snapshot)
+                },
+                style: {
+                  appearance: 'none',
+                  padding: '4px 8px',
+                  border: '1px solid ' + (pipActive ? ORANGE : BORDER),
+                  borderRadius: '6px',
+                  background:
+                    pipActive ? 'color-mix(in srgb, ' + ORANGE + ' 16%, transparent)' : 'transparent',
+                  color: pipActive ? FG : MUTED,
+                  fontFamily: MONO,
+                  fontSize: '10px',
+                  fontWeight: pipActive ? 700 : 500,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                },
+                children: pipActive ? '📌 Siempre encima (activo)' : '📌 Siempre encima'
+              }),
+              typeof host.revealPane === 'function'
+                ? jsx('button', {
+                    type: 'button',
+                    className: 'sp-expand',
+                    'aria-label': 'expandir panel lateral',
+                    title: 'Mostrar también en el panel lateral derecho',
+                    onClick: expandRadarPanel,
+                    style: {
+                      appearance: 'none',
+                      padding: '4px 8px',
+                      border: '1px solid ' + BORDER,
+                      borderRadius: '6px',
+                      background: 'transparent',
+                      color: MUTED,
+                      fontFamily: MONO,
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap'
+                    },
+                    children: '⤢ Panel lateral'
+                  })
+                : null
+            ]
+          })
+        : null,
       jsxs('div', {
         style: {
           flex: '0 0 auto',
           display: 'flex',
           alignItems: 'center',
           gap: '6px',
-          padding: '8px 8px 6px',
+          padding: fullPage ? '10px 14px 8px' : '8px 8px 6px',
           borderBottom: '1px solid ' + BORDER
         },
         children: [
@@ -1717,6 +2337,33 @@ function RadarPanel({ ctx }) {
               counter.key
             )
           ),
+          !fullPage
+            ? jsx('button', {
+                type: 'button',
+                className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
+                'aria-pressed': pipActive ? 'true' : 'false',
+                'aria-label': 'siempre encima',
+                title: 'Siempre encima (Picture-in-Picture al minimizar)',
+                onClick: () => {
+                  toggleRadarPip(ctx, snapshot)
+                },
+                style: {
+                  appearance: 'none',
+                  flex: '0 0 auto',
+                  padding: '4px 6px',
+                  border: '1px solid ' + (pipActive ? ORANGE : BORDER),
+                  borderRadius: '6px',
+                  background:
+                    pipActive ? 'color-mix(in srgb, ' + ORANGE + ' 16%, transparent)' : 'transparent',
+                  color: pipActive ? FG : MUTED,
+                  fontFamily: MONO,
+                  fontSize: '10px',
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                },
+                children: '📌'
+              })
+            : null,
           jsxs('details', {
             style: { position: 'relative', flex: '0 0 auto' },
             children: [
@@ -1794,7 +2441,12 @@ function RadarPanel({ ctx }) {
         ]
       }),
       jsxs('div', {
-        style: { flex: '0 0 auto', display: 'flex', gap: '3px', padding: '6px 8px 0' },
+        style: {
+          flex: '0 0 auto',
+          display: 'flex',
+          gap: '3px',
+          padding: fullPage ? '8px 14px 0' : '6px 8px 0'
+        },
         children: PANEL_FILTERS.map(tab =>
           jsx(
             'button',
@@ -1823,7 +2475,13 @@ function RadarPanel({ ctx }) {
       }),
       shown
         ? jsx('div', {
-            style: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '4px 6px 6px', scrollbarWidth: 'thin' },
+            style: {
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              padding: fullPage ? '6px 14px 10px' : '4px 6px 6px',
+              scrollbarWidth: 'thin'
+            },
             children: groups.map(group =>
               jsxs(
                 'section',
@@ -1846,23 +2504,48 @@ function RadarPanel({ ctx }) {
                         jsx('span', { children: String(group.items.length) })
                       ]
                     }),
-                    ...group.items.map(session =>
-                      jsx(
-                        PanelRow,
-                        {
-                          session,
-                          now,
-                          compact,
-                          stop: stopping[session.id],
-                          copied: Boolean(copied[session.id]),
-                          onOpen: open,
-                          onStop: stop,
-                          onCopy: copy,
-                          ctx
-                        },
-                        session.id
-                      )
-                    )
+                    fullPage
+                      ? jsx('div', {
+                          style: {
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 340px), 1fr))',
+                            gap: '6px'
+                          },
+                          children: group.items.map(session =>
+                            jsx(
+                              PanelRow,
+                              {
+                                session,
+                                now,
+                                compact,
+                                stop: stopping[session.id],
+                                copied: Boolean(copied[session.id]),
+                                onOpen: open,
+                                onStop: stop,
+                                onCopy: copy,
+                                ctx
+                              },
+                              session.id
+                            )
+                          )
+                        })
+                      : group.items.map(session =>
+                          jsx(
+                            PanelRow,
+                            {
+                              session,
+                              now,
+                              compact,
+                              stop: stopping[session.id],
+                              copied: Boolean(copied[session.id]),
+                              onOpen: open,
+                              onStop: stop,
+                              onCopy: copy,
+                              ctx
+                            },
+                            session.id
+                          )
+                        )
                   ]
                 },
                 group.key
@@ -1896,7 +2579,7 @@ function RadarPanel({ ctx }) {
           alignItems: 'center',
           gap: '6px',
           minHeight: '20px',
-          padding: '0 8px',
+          padding: fullPage ? '0 14px' : '0 8px',
           borderTop: '1px solid ' + BORDER,
           fontFamily: MONO,
           fontSize: '9px',
@@ -1920,9 +2603,19 @@ function RadarPanel({ ctx }) {
 }
 
 /**
- * Register both surfaces: the floating quick view and the full right panel.
- * Neither asks for `lifecycleKeepAlive`: each body owns its interval and its
- * event subscription, so collapsing or closing it stops the work.
+ * Full-page view mounted at `/radar` when opened from the left sidebar (`sidebar.nav`).
+ */
+function RadarPage({ ctx }) {
+  return RadarPanel({ ctx, fullPage: true })
+}
+
+/**
+ * Register all Radar surfaces:
+ * 1. `radar` — floating quick view (`placement: 'floating'`, S/M/L/XL).
+ * 2. `radar:panel` — right side panel (`placement: 'right'`, 380 px).
+ * 4. `nav` — left sidebar navigation item (`sidebar.nav` -> `/radar`).
+ * 5. `page` — full-page route (`routes` at `/radar`).
+ * 6. `command:open` & `command:pip` — command palette actions (`palette`).
  */
 function register(ctx) {
   // The remembered size is read synchronously, so the pane never mounts at the
@@ -1938,6 +2631,50 @@ function register(ctx) {
       width: '380px'
     },
     render: () => jsx(RadarPanel, { ctx })
+  })
+
+  ctx.register({
+    id: 'nav',
+    area: SIDEBAR_NAV_AREA,
+    data: {
+      path: RADAR_ROUTE,
+      label: 'Radar',
+      codicon: 'pulse'
+    }
+  })
+
+  ctx.register({
+    id: 'page',
+    area: ROUTES_AREA,
+    title: 'Radar',
+    data: {
+      path: RADAR_ROUTE
+    },
+    render: () => jsx(RadarPage, { ctx })
+  })
+
+  ctx.register({
+    id: 'command:open',
+    area: PALETTE_AREA,
+    data: {
+      id: 'radar.open',
+      label: 'Radar: Abrir vista completa',
+      keywords: ['radar', 'sessions', 'sesiones', 'live', 'htop'],
+      run: () => openRadarPage()
+    }
+  })
+
+  ctx.register({
+    id: 'command:pip',
+    area: PALETTE_AREA,
+    data: {
+      id: 'radar.pip',
+      label: 'Radar: Siempre encima (Picture-in-Picture)',
+      keywords: ['radar', 'pip', 'always on top', 'siempre encima', 'flotante'],
+      run: () => {
+        toggleRadarPip(ctx)
+      }
+    }
   })
 }
 

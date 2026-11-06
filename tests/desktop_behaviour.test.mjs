@@ -64,7 +64,16 @@ const exported = [
   'SIZE_ORDER',
   'storedSize',
   'registerRadarPane',
-  'expandRadarPanel'
+  'expandRadarPanel',
+  'RadarPage',
+  'openRadarPage',
+  'renderRadarPipCanvas',
+  'toggleRadarPip',
+  'isRadarPipActive',
+  'SIDEBAR_NAV_AREA',
+  'ROUTES_AREA',
+  'PALETTE_AREA',
+  'RADAR_ROUTE'
 ]
 
 const dir = mkdtempSync(join(tmpdir(), 'radar-js-'))
@@ -663,17 +672,25 @@ test('an idle floating row paints the amber espera badge', () => {
 // F8 — two panes, settings, grouping and the full side panel
 // ---------------------------------------------------------------------------
 
-test('register contributes the floating quick view and the right panel', () => {
+test('register contributes the floating quick view, right panel, left sidebar, route and palette', () => {
   // The floating size is remembered now: start from the documented default.
   settingsStore.delete('radar.size')
   const registered = []
   mod.register({ register: pane => registered.push(pane) })
 
-  assert.equal(registered.length, 2)
+  assert.equal(registered.length, 6)
   const floating = registered.find(pane => pane.id === 'radar')
   const panel = registered.find(pane => pane.id === 'radar:panel')
+  const nav = registered.find(pane => pane.id === 'nav')
+  const page = registered.find(pane => pane.id === 'page')
+  const cmdOpen = registered.find(pane => pane.id === 'command:open')
+  const cmdPip = registered.find(pane => pane.id === 'command:pip')
   assert.ok(floating, 'the floating quick view keeps its id')
   assert.ok(panel, 'the side panel is radar:panel')
+  assert.ok(nav, 'the left sidebar navigation item is registered')
+  assert.ok(page, 'the /radar route is registered')
+  assert.ok(cmdOpen, 'the open command palette item is registered')
+  assert.ok(cmdPip, 'the pip command palette item is registered')
   assert.equal(floating.area, 'panes')
   assert.equal(floating.data.placement, 'floating')
   assert.equal(floating.data.width, '320px')
@@ -682,6 +699,16 @@ test('register contributes the floating quick view and the right panel', () => {
   assert.equal(panel.title, 'Radar')
   assert.equal(panel.data.placement, 'right')
   assert.equal(panel.data.width, '380px')
+  assert.equal(nav.area, 'sidebar.nav')
+  assert.equal(nav.data.path, '/radar')
+  assert.equal(nav.data.label, 'Radar')
+  assert.equal(nav.data.codicon, 'pulse')
+  assert.equal(page.area, 'routes')
+  assert.equal(page.title, 'Radar')
+  assert.equal(page.data.path, '/radar')
+  assert.equal(typeof page.render, 'function')
+  assert.equal(cmdOpen.area, 'palette')
+  assert.equal(cmdPip.area, 'palette')
 })
 
 test('livePathFor defaults to all/180 and follows current/600 settings', () => {
@@ -926,6 +953,153 @@ test('without revealPane the floating header paints no expand button', () => {
     walk(tree).some(node => node.props && node.props.className === 'sp-expand'),
     false
   )
+})
+
+// ---------------------------------------------------------------------------
+// F10 — Left sidebar full page (/radar) and Always-on-Top Picture-in-Picture
+// ---------------------------------------------------------------------------
+
+test('RadarPage renders the full-page header, search bar and Always-on-Top button', () => {
+  globalThis.__SP_STATE__ = [
+    F9_SNAPSHOT,
+    { filter: 'all', profiles: 'all', window: 180, finished: true, density: 'comfortable' },
+    false,
+    {},
+    {},
+    false,
+    ''
+  ]
+  const tree = mod.RadarPage({ ctx: { rest: async () => F9_SNAPSHOT } })
+  const nodes = walk(tree)
+  const head = nodes.find(node => node.props && node.props.className === 'sp-page-head')
+  assert.ok(head, 'RadarPage renders the full-page header')
+  const search = nodes.find(node => node.type === 'input' && node.props && node.props.type === 'search')
+  assert.ok(search, 'RadarPage renders a search input')
+  const pip = nodes.find(node => node.props && String(node.props.className || '').includes('sp-pip'))
+  assert.ok(pip, 'RadarPage renders the Always-on-Top PiP button')
+  assert.match(plainText(pip), /Siempre encima/)
+})
+
+test('openRadarPage navigates to /radar when host.navigate is present', () => {
+  const routes = []
+  hostStub.navigate = path => routes.push(path)
+  try {
+    mod.openRadarPage()
+    assert.deepEqual(routes, ['/radar'])
+  } finally {
+    delete hostStub.navigate
+  }
+})
+
+test('renderRadarPipCanvas paints counters and active sessions onto a 2D canvas', () => {
+  const texts = []
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: type => {
+      assert.equal(type, '2d')
+      return {
+        fillStyle: '',
+        strokeStyle: '',
+        lineWidth: 1,
+        font: '',
+        beginPath: () => {},
+        roundRect: () => {},
+        rect: () => {},
+        fill: () => {},
+        stroke: () => {},
+        fillRect: () => {},
+        drawImage: () => {},
+        fillText: text => texts.push(String(text))
+      }
+    }
+  }
+  const summary = mod.renderRadarPipCanvas(
+    canvas,
+    {
+      generated_at: NOW_S - 2,
+      window_s: 180,
+      profiles: ['default', 'maca'],
+      sessions: [
+        freshRow({ id: 'r1', title: 'Compilando módulo', state: 'running', tool: 'terminal' }),
+        freshRow({ id: 'w1', title: 'Revisión lista', state: 'idle', can_interrupt: false }),
+        freshRow({ id: 's1', title: 'Turno sin latido', state: 'stalled' })
+      ],
+      totals: { working: 1, waiting: 1, stalled: 1, running: 1, idle: 1, live: 2, dormant: 0, sessions: 3 }
+    },
+    NOW_MS
+  )
+  assert.equal(canvas.width, 720)
+  assert.equal(canvas.height, 450)
+  assert.deepEqual(summary, { workingCount: 1, waitingCount: 1, stalledCount: 1, rowCount: 3 })
+  assert.ok(texts.some(t => t.includes('Radar · Siempre encima')), JSON.stringify(texts))
+  assert.ok(texts.some(t => t.includes('Compilando módulo')), JSON.stringify(texts))
+  assert.ok(texts.some(t => t.includes('Revisión lista')), JSON.stringify(texts))
+  assert.ok(texts.some(t => t.includes('! COLGADA')), JSON.stringify(texts))
+})
+
+test('toggleRadarPip enters and exits Picture-in-Picture via canvas stream', async () => {
+  let pipCalled = 0
+  let exitCalled = 0
+  let playCalled = 0
+  const prevDoc = globalThis.document
+  const mockVideo = {
+    muted: false,
+    playsInline: false,
+    style: {},
+    srcObject: null,
+    setAttribute: () => {},
+    addEventListener: () => {},
+    play: async () => {
+      playCalled += 1
+    },
+    requestPictureInPicture: async () => {
+      pipCalled += 1
+      globalThis.document.pictureInPictureElement = mockVideo
+    }
+  }
+  const mockCanvas = {
+    width: 0,
+    height: 0,
+    captureStream: () => ({ id: 'mock-stream' }),
+    getContext: () => ({
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      font: '',
+      beginPath: () => {},
+      roundRect: () => {},
+      rect: () => {},
+      fill: () => {},
+      stroke: () => {},
+      fillRect: () => {},
+      drawImage: () => {},
+      fillText: () => {}
+    })
+  }
+  globalThis.document = {
+    pictureInPictureElement: null,
+    body: { appendChild: () => {} },
+    createElement: tag => (tag === 'canvas' ? mockCanvas : mockVideo),
+    exitPictureInPicture: async () => {
+      exitCalled += 1
+      globalThis.document.pictureInPictureElement = null
+    }
+  }
+  try {
+    const entered = await mod.toggleRadarPip({ rest: async () => F9_SNAPSHOT }, F9_SNAPSHOT)
+    assert.equal(entered, true)
+    assert.equal(playCalled, 1)
+    assert.equal(pipCalled, 1)
+    assert.equal(mod.isRadarPipActive(), true)
+
+    const exited = await mod.toggleRadarPip({ rest: async () => F9_SNAPSHOT }, F9_SNAPSHOT)
+    assert.equal(exited, false)
+    assert.equal(exitCalled, 1)
+    assert.equal(mod.isRadarPipActive(), false)
+  } finally {
+    globalThis.document = prevDoc
+  }
 })
 
 // ---------------------------------------------------------------------------

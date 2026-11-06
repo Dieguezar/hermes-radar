@@ -1326,6 +1326,24 @@ _VIEW_HTML = """<!doctype html>
     white-space: nowrap;
   }
   .status[data-state="error"] { color: var(--warn); }
+  .pip-btn {
+    appearance: none;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .pip-btn:hover { color: var(--text); border-color: var(--accent); }
+  .pip-btn.on {
+    color: var(--text);
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
   /* ---------- counters ---------- */
   .summary {
     display: flex; flex-wrap: wrap; gap: 6px 14px;
@@ -1527,6 +1545,7 @@ _VIEW_HTML = """<!doctype html>
     </div>
     <span class="live" id="live-pill"><i aria-hidden="true"></i><span id="live-label">0 live</span></span>
     <span class="status" id="status">conectando…</span>
+    <button class="pip-btn" id="pip-btn" type="button" aria-pressed="false" title="Mantener mini-ventana siempre encima (Picture-in-Picture)">📌 Siempre encima</button>
   </header>
 
   <div class="summary" id="summary"></div>
@@ -1878,6 +1897,108 @@ _VIEW_HTML = """<!doctype html>
 
     renderScope(data);
     cadenceEl.textContent = 'cada ' + Math.round(REFRESH / 1000) + ' s';
+    if (pipCanvas && document.pictureInPictureElement === pipVideo) {
+      drawPipCanvas(data);
+    }
+  }
+
+  const pipBtn = document.getElementById('pip-btn');
+  let pipCanvas = null;
+  let pipVideo = null;
+  let pipStream = null;
+
+  function drawPipCanvas(data) {
+    if (!pipCanvas) return;
+    const g = pipCanvas.getContext('2d');
+    if (!g) return;
+    const t = (data && data.totals) || {};
+    const working = t.working !== undefined ? t.working : (t.running || 0) + (t.queued || 0);
+    const waiting = t.waiting !== undefined ? t.waiting : (t.idle || 0);
+    const stalled = t.stalled || 0;
+    const list = (data && Array.isArray(data.sessions) ? data.sessions : []).slice(0, 5);
+
+    g.fillStyle = '#0d1117';
+    g.fillRect(0, 0, 720, 450);
+    g.fillStyle = '#ff4d00';
+    g.fillRect(0, 0, 720, 4);
+
+    g.fillStyle = '#e6edf3';
+    g.font = '700 16px system-ui, sans-serif';
+    g.fillText('Radar · Siempre encima', 18, 32);
+
+    g.fillStyle = '#9aa4af';
+    g.font = '600 12px monospace';
+    g.fillText(working + ' trabajando · ' + waiting + ' esperando · ' + stalled + ' colgadas', 18, 56);
+
+    if (!list.length) {
+      g.fillStyle = '#9aa4af';
+      g.font = '500 14px system-ui, sans-serif';
+      g.fillText('Ninguna sesión activa en la ventana', 230, 240);
+      return;
+    }
+
+    list.forEach((s, idx) => {
+      const y = 74 + idx * 68;
+      const isStalled = s.state === 'stalled';
+      const isWait = s.state === 'idle';
+      g.fillStyle = isStalled ? '#291417' : isWait ? '#261f12' : '#161b22';
+      g.fillRect(16, y, 688, 58);
+      g.fillStyle = isStalled ? '#f85149' : isWait ? '#d29922' : '#3fb950';
+      g.fillRect(16, y, 5, 58);
+      g.fillStyle = '#e6edf3';
+      g.font = '600 14px system-ui, sans-serif';
+      g.fillText(String(s.title || s.id).slice(0, 44), 32, y + 24);
+      g.fillStyle = isStalled ? '#f85149' : isWait ? '#d29922' : '#9aa4af';
+      g.font = '500 12px monospace';
+      const prof = s.profile_title || s.profile_label || s.profile || 'default';
+      const act = activityText(s);
+      g.fillText((prof + (s.tool ? ' · ' + s.tool : '') + (act ? ' · ' + act : '')).slice(0, 64), 32, y + 45);
+    });
+  }
+
+  if (pipBtn) {
+    pipBtn.addEventListener('click', async () => {
+      try {
+        if (document.pictureInPictureElement) {
+          await document.exitPictureInPicture();
+          pipBtn.classList.remove('on');
+          pipBtn.setAttribute('aria-pressed', 'false');
+          return;
+        }
+        if (!pipCanvas) {
+          pipCanvas = document.createElement('canvas');
+          pipCanvas.width = 720;
+          pipCanvas.height = 450;
+        }
+        drawPipCanvas(latest || {});
+        if (!pipVideo) {
+          pipVideo = document.createElement('video');
+          pipVideo.muted = true;
+          pipVideo.playsInline = true;
+          pipVideo.style.position = 'fixed';
+          pipVideo.style.width = '1px';
+          pipVideo.style.height = '1px';
+          pipVideo.style.opacity = '0';
+          pipVideo.style.pointerEvents = 'none';
+          pipVideo.addEventListener('leavepictureinpicture', () => {
+            pipBtn.classList.remove('on');
+            pipBtn.setAttribute('aria-pressed', 'false');
+          });
+          document.body.appendChild(pipVideo);
+        }
+        if (!pipStream && typeof pipCanvas.captureStream === 'function') {
+          pipStream = pipCanvas.captureStream(2);
+          pipVideo.srcObject = pipStream;
+        }
+        await pipVideo.play();
+        await pipVideo.requestPictureInPicture();
+        pipBtn.classList.add('on');
+        pipBtn.setAttribute('aria-pressed', 'true');
+      } catch (_err) {
+        pipBtn.classList.remove('on');
+        pipBtn.setAttribute('aria-pressed', 'false');
+      }
+    });
   }
 
   async function tick() {
