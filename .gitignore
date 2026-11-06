@@ -8,3 +8,7 @@ venv/
 *.db-shm
 .DS_Store
 node_modules/
+# agent scratch
+a\.atl/
+odd/
+
