@@ -67,6 +67,10 @@ const exported = [
   'expandRadarPanel',
   'RadarPage',
   'openRadarPage',
+  'enterFullView',
+  'exitFullView',
+  'hideRadarFloatingPane',
+  'showRadarFloatingPane',
   'renderRadarPipCanvas',
   'toggleRadarPip',
   'isRadarPipActive',
@@ -1100,6 +1104,41 @@ test('toggleRadarPip enters and exits Picture-in-Picture via canvas stream', asy
   } finally {
     globalThis.document = prevDoc
   }
+})
+
+test('floating pane auto-hides when full view enters and restores when it exits', () => {
+  const registered = []
+  const disposed = []
+  const ctx = {
+    register: pane => {
+      registered.push(pane)
+      return () => disposed.push(pane.id)
+    }
+  }
+
+  // Initial state: floating pane is registered
+  mod.registerRadarPane(ctx, 's')
+  assert.equal(registered.length, 1)
+  assert.equal(disposed.length, 0)
+
+  // Full view (sidebar panel or /radar full page) opens
+  mod.enterFullView(ctx)
+  assert.equal(disposed.length, 1, 'floating pane must be disposed when full view enters')
+
+  // While full view is active, RadarPane renders null
+  assert.equal(mod.RadarPane({ ctx }), null)
+
+  // When another full view stacks (e.g. side panel on /radar)
+  mod.enterFullView(ctx)
+  assert.equal(disposed.length, 1)
+
+  // Closing one full view keeps it hidden
+  mod.exitFullView(ctx)
+  assert.equal(registered.length, 1, 'must not re-register until all full views exit')
+
+  // When all full views exit, floating pane is re-registered
+  mod.exitFullView(ctx)
+  assert.equal(registered.length, 2, 'floating pane must re-register when returning to chat')
 })
 
 // ---------------------------------------------------------------------------

@@ -20,13 +20,13 @@
  * "read-only".
  */
 
-import { host } from '@hermes/plugin-sdk'
+import { host, blobatarSvg } from '@hermes/plugin-sdk'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'radar'
 const PLUGIN_NAME = 'Radar'
-const VERSION = '0.7.0'
+const VERSION = '0.7.1'
 
 const SIDEBAR_NAV_AREA = 'sidebar.nav'
 const ROUTES_AREA = 'routes'
@@ -168,6 +168,46 @@ function storedSize(ctx) {
   }
 }
 
+let currentCtx = null
+let activeFullViews = 0
+let paneRegistered = false
+
+function hideRadarFloatingPane() {
+  if (typeof floatingPaneDispose === 'function') {
+    try {
+      floatingPaneDispose()
+    } catch (_error) {
+      // Host may have already torn down the contribution
+    }
+    floatingPaneDispose = null
+  }
+  paneRegistered = false
+}
+
+function showRadarFloatingPane(ctx) {
+  if (paneRegistered) return
+  const targetCtx = ctx || currentCtx
+  if (!targetCtx) return
+  paneRegistered = true
+  registerRadarPane(targetCtx, storedSize(targetCtx))
+}
+
+function enterFullView(ctx) {
+  if (ctx) currentCtx = ctx
+  activeFullViews += 1
+  if (activeFullViews === 1) {
+    hideRadarFloatingPane()
+  }
+}
+
+function exitFullView(ctx) {
+  if (ctx) currentCtx = ctx
+  activeFullViews = Math.max(0, activeFullViews - 1)
+  if (activeFullViews === 0) {
+    showRadarFloatingPane(ctx || currentCtx)
+  }
+}
+
 /**
  * Register (or re-register) the floating quick view at one of the four sizes.
  * Re-registration by id is the only resize the Desktop offers: the previous
@@ -175,8 +215,14 @@ function storedSize(ctx) {
  * component mounted under its stable `source:id` key.
  */
 function registerRadarPane(ctx, sizeKey) {
+  if (ctx) currentCtx = ctx
   const key = paneSize(sizeKey)
   const size = PANE_SIZES[key]
+
+  if (activeFullViews > 0) {
+    paneRegistered = false
+    return size
+  }
 
   if (typeof floatingPaneDispose === 'function') {
     try {
@@ -198,6 +244,7 @@ function registerRadarPane(ctx, sizeKey) {
     },
     render: () => jsx(RadarPane, { ctx })
   })
+  paneRegistered = true
 
   return size
 }
@@ -416,10 +463,21 @@ function shapeOf(shape, key) {
 const AVATAR_CACHE = new Map()
 const AVATAR_INFLIGHT = new Map()
 const AVATAR_IMAGES = new Map()
+const AVATAR_FAILED_AT = new Map()
+const FAILED_RETRY_MS = 10000
 
 function cachedAvatar(profile) {
   const key = String(profile || 'default').trim() || 'default'
-  return AVATAR_CACHE.has(key) ? AVATAR_CACHE.get(key) : undefined
+  if (AVATAR_CACHE.has(key)) {
+    const val = AVATAR_CACHE.get(key)
+    if (val !== null) return val
+    const failedAt = AVATAR_FAILED_AT.get(key) || 0
+    if (Date.now() - failedAt < FAILED_RETRY_MS) return null
+    AVATAR_CACHE.delete(key)
+    AVATAR_FAILED_AT.delete(key)
+    return undefined
+  }
+  return undefined
 }
 
 function rememberAvatarImage(key, url) {
@@ -437,7 +495,8 @@ function rememberAvatarImage(key, url) {
 
 function loadAvatar(ctx, profile) {
   const key = String(profile || 'default').trim() || 'default'
-  if (AVATAR_CACHE.has(key)) return Promise.resolve(AVATAR_CACHE.get(key))
+  const cached = cachedAvatar(key)
+  if (cached !== undefined) return Promise.resolve(cached)
   const inflight = AVATAR_INFLIGHT.get(key)
   if (inflight) return inflight
 
@@ -451,12 +510,18 @@ function loadAvatar(ctx, profile) {
           ? payload.data_url
           : null
       AVATAR_CACHE.set(key, url)
-      if (url) rememberAvatarImage(key, url)
+      if (url) {
+        AVATAR_FAILED_AT.delete(key)
+        rememberAvatarImage(key, url)
+      } else {
+        AVATAR_FAILED_AT.set(key, Date.now())
+      }
       return url
     })
     .catch(() => {
-      // A missing avatar is a fallback, not an error: remember it and stop asking.
+      // A missing avatar is a fallback, not an error: retry after cooldown.
       AVATAR_CACHE.set(key, null)
+      AVATAR_FAILED_AT.set(key, Date.now())
       return null
     })
     .finally(() => {
@@ -628,8 +693,14 @@ function Avatar({ profile, title, avatar, ctx }) {
   })
 
   useEffect(() => {
-    if (!info.has_image) return undefined
-    if (cachedAvatar(key) !== undefined) return undefined
+    const cached = cachedAvatar(key)
+    if (cached) {
+      setImage(cached)
+      return undefined
+    }
+    if (!info.has_image) {
+      return undefined
+    }
     let alive = true
     loadAvatar(ctx, key).then(url => {
       if (alive && url) setImage(url)
@@ -660,6 +731,11 @@ function Avatar({ profile, title, avatar, ctx }) {
       src: image,
       width: 30,
       height: 30,
+      onError: () => {
+        AVATAR_CACHE.set(key, null)
+        AVATAR_FAILED_AT.set(key, Date.now())
+        setImage(null)
+      },
       style: {
         width: '30px',
         height: '30px',
@@ -669,6 +745,33 @@ function Avatar({ profile, title, avatar, ctx }) {
         display: 'block'
       }
     })
+  }
+
+  if (
+    typeof blobatarSvg === 'function' &&
+    info.shape &&
+    (info.shape === 'blobatar' || info.shape.indexOf('blobatar') === 0)
+  ) {
+    try {
+      const svg = blobatarSvg(key, { size: 30 })
+      if (svg) {
+        return jsx('span', {
+          'aria-hidden': true,
+          dangerouslySetInnerHTML: { __html: svg },
+          style: {
+            width: '30px',
+            height: '30px',
+            flex: '0 0 30px',
+            display: 'block',
+            lineHeight: 0,
+            borderRadius: '22%',
+            overflow: 'hidden'
+          }
+        })
+      }
+    } catch (_error) {
+      // Fall through to initial silhouette if SVG fails
+    }
   }
 
   return jsx('span', {
@@ -1313,6 +1416,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
 }
 
 function RadarPane({ ctx }) {
+  if (activeFullViews > 0) return null
   const [snapshot, setSnapshot] = useState(null)
   const [offline, setOffline] = useState(false)
   const [stopping, setStopping] = useState({})
@@ -1954,6 +2058,13 @@ function RadarPanel({ ctx, fullPage = false }) {
   const debounce = useRef(0)
   const settingsRef = useRef(settings)
   settingsRef.current = settings
+
+  useEffect(() => {
+    enterFullView(ctx)
+    return () => {
+      exitFullView(ctx)
+    }
+  }, [ctx])
 
   const load = useCallback(async () => {
     try {
