@@ -1213,7 +1213,7 @@ def view(
 
 
 _VIEW_HTML = """<!doctype html>
-<html lang="es" data-theme="__THEME__">
+<html lang="en" data-theme="__THEME__">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1544,18 +1544,18 @@ _VIEW_HTML = """<!doctype html>
       <h1>Radar</h1>
     </div>
     <span class="live" id="live-pill"><i aria-hidden="true"></i><span id="live-label">0 live</span></span>
-    <span class="status" id="status">conectando…</span>
-    <button class="pip-btn" id="lang-btn" type="button" title="Switch language / Cambiar idioma">🌐 ES</button>
-    <button class="pip-btn" id="pip-btn" type="button" aria-pressed="false" title="Mantener mini-ventana siempre encima (Picture-in-Picture)">📌 Siempre encima</button>
+    <span class="status" id="status">connecting…</span>
+    <button class="pip-btn" id="lang-btn" type="button" title="Switch language / Cambiar idioma">🌐 EN</button>
+    <button class="pip-btn" id="pip-btn" type="button" aria-pressed="false" title="Keep mini-window always on top (Picture-in-Picture)">📌 Always on Top</button>
   </header>
 
   <div class="summary" id="summary"></div>
 
-  <nav class="segs" id="segs" aria-label="Filtrar sesiones">
-    <button class="seg on" type="button" data-filter="all">Todas</button>
-    <button class="seg" type="button" data-filter="working">Trabajando</button>
-    <button class="seg" type="button" data-filter="waiting">Esperan</button>
-    <button class="seg" type="button" data-filter="problem">Problema</button>
+  <nav class="segs" id="segs" aria-label="Filter sessions">
+    <button class="seg on" type="button" data-filter="all">All</button>
+    <button class="seg" type="button" data-filter="working">Working</button>
+    <button class="seg" type="button" data-filter="waiting">Waiting</button>
+    <button class="seg" type="button" data-filter="problem">Problem</button>
   </nav>
 
   <main class="grid" id="grid" aria-live="polite"></main>
@@ -1563,7 +1563,7 @@ _VIEW_HTML = """<!doctype html>
 
   <div class="footbar">
     <span class="scope" id="scope">—</span>
-    <span class="right" id="cadence">cada 2 s</span>
+    <span class="right" id="cadence">every 2 s</span>
   </div>
 </div>
 <script>
@@ -1589,63 +1589,32 @@ _VIEW_HTML = """<!doctype html>
   const segsEl = document.getElementById('segs');
 
   const STATES = {
-    running: { label: 'corriendo', cls: 'run' },
-    queued: { label: 'en cola', cls: 'queue' },
-    stalled: { label: 'colgada', cls: 'bad' },
-    idle: { label: 'espera', cls: 'idle wait' },
-    done: { label: 'completada', cls: 'done' },
-    failed: { label: 'fallida', cls: 'done' }
+    running: { label: 'running', cls: 'run' },
+    queued: { label: 'queued', cls: 'queue' },
+    stalled: { label: 'stalled', cls: 'bad' },
+    idle: { label: 'waiting', cls: 'idle wait' },
+    done: { label: 'completed', cls: 'done' },
+    failed: { label: 'failed', cls: 'done' }
   };
 
   const GLYPHS = {
-    stalled: { cls: 'bad', glyph: '!', label: 'colgada' },
-    queued: { cls: 'q', glyph: '◷', label: 'en cola' },
-    idle: { cls: 'wait', glyph: '●', label: 'espera' },
-    done: { cls: 'ok', glyph: '✓', label: 'completada' },
-    failed: { cls: 'bad', glyph: '✗', label: 'fallida' }
+    stalled: { cls: 'bad', glyph: '!', label: 'stalled' },
+    queued: { cls: 'q', glyph: '◷', label: 'queued' },
+    idle: { cls: 'wait', glyph: '●', label: 'waiting' },
+    done: { cls: 'ok', glyph: '✓', label: 'completed' },
+    failed: { cls: 'bad', glyph: '✗', label: 'failed' }
   };
 
   let filter = INITIAL_TAB;
   let latest = null;
-  let currentLang = (new URLSearchParams(window.location.search).get('lang') || localStorage.getItem('radar.lang') || 'es').toLowerCase() === 'en' ? 'en' : 'es';
+  let currentLang = (new URLSearchParams(window.location.search).get('lang') || localStorage.getItem('radar.lang') || 'en').toLowerCase() === 'es' ? 'es' : 'en';
 
   const LOCALES = {
-    es: {
-      pipBtn: '📌 Siempre encima',
-      tabs: { all: 'Todas', working: 'Trabajando', waiting: 'Esperan', problem: 'Problema' },
-      waitBadge: 'espera',
-      noModel: 'sin modelo',
-      doneFoot: '✓ completada',
-      failedFoot: '✗ fallida',
-      noHeartbeat: 'sin latido hace ',
-      queuedAct: 'admisión en cola',
-      waitingUser: 'esperando al usuario',
-      sessionOne: 'sesión',
-      sessionMany: 'sesiones',
-      working: 'trabajando',
-      waiting: 'esperando',
-      stalledOne: 'colgada',
-      stalledMany: 'colgadas',
-      dormantOne: 'inactiva',
-      dormantMany: 'inactivas',
-      windowPrefix: 'ventana ',
-      noProfiles: 'sin perfiles',
-      noProfilesTitle: 'ningún perfil seleccionado',
-      profilesMany: ' perfiles',
-      emptyAllTitle: 'Ninguna sesión activa',
-      emptyAllDormant: ' inactivas, fuera de la ventana',
-      emptyAllNone: 'Sin sesiones en el historial reciente',
-      emptyProbTitle: 'Nada colgado',
-      emptyProbSub: 'Ninguna sesión necesita atención',
-      emptyWaitTitle: 'Nadie espera',
-      emptyWaitSub: 'Ningún turno esperando al usuario',
-      emptyWorkTitle: 'Ninguna sesión trabajando',
-      updatedAgo: 'actualizado hace ',
-      cadencePrefix: 'cada '
-    },
     en: {
       pipBtn: '📌 Always on Top',
+      pipHeader: 'Radar · Always on Top',
       tabs: { all: 'All', working: 'Working', waiting: 'Waiting', problem: 'Problem' },
+      runningLabel: 'running',
       waitBadge: 'waiting',
       noModel: 'no model',
       doneFoot: '✓ completed',
@@ -1674,10 +1643,47 @@ _VIEW_HTML = """<!doctype html>
       emptyWaitSub: 'No turn waiting on user',
       emptyWorkTitle: 'No session working',
       updatedAgo: 'updated ',
-      cadencePrefix: 'every '
+      cadencePrefix: 'every ',
+      offline: 'offline'
+    },
+    es: {
+      pipBtn: '📌 Siempre encima',
+      pipHeader: 'Radar · Siempre encima',
+      tabs: { all: 'Todas', working: 'Trabajando', waiting: 'Esperan', problem: 'Problema' },
+      runningLabel: 'corriendo',
+      waitBadge: 'espera',
+      noModel: 'sin modelo',
+      doneFoot: '✓ completada',
+      failedFoot: '✗ fallida',
+      noHeartbeat: 'sin latido hace ',
+      queuedAct: 'admisión en cola',
+      waitingUser: 'esperando al usuario',
+      sessionOne: 'sesión',
+      sessionMany: 'sesiones',
+      working: 'trabajando',
+      waiting: 'esperando',
+      stalledOne: 'colgada',
+      stalledMany: 'colgadas',
+      dormantOne: 'inactiva',
+      dormantMany: 'inactivas',
+      windowPrefix: 'ventana ',
+      noProfiles: 'sin perfiles',
+      noProfilesTitle: 'ningún perfil seleccionado',
+      profilesMany: ' perfiles',
+      emptyAllTitle: 'Ninguna sesión activa',
+      emptyAllDormant: ' inactivas, fuera de la ventana',
+      emptyAllNone: 'Sin sesiones en el historial reciente',
+      emptyProbTitle: 'Nada colgado',
+      emptyProbSub: 'Ninguna sesión necesita atención',
+      emptyWaitTitle: 'Nadie espera',
+      emptyWaitSub: 'Ningún turno esperando al usuario',
+      emptyWorkTitle: 'Ninguna sesión trabajando',
+      updatedAgo: 'actualizado hace ',
+      cadencePrefix: 'cada ',
+      offline: 'sin conexión'
     }
   };
-  function L() { return LOCALES[currentLang] || LOCALES.es; }
+  function L() { return LOCALES[currentLang] || LOCALES.en; }
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -1788,7 +1794,7 @@ _VIEW_HTML = """<!doctype html>
   function stateGlyph(state) {
     if (state === 'running') {
       const node = el('span', 'st run');
-      node.setAttribute('aria-label', 'corriendo');
+      node.setAttribute('aria-label', L().runningLabel);
       node.appendChild(el('span', null, '●'));
       return node;
     }
@@ -1900,7 +1906,7 @@ _VIEW_HTML = """<!doctype html>
       waiting: sessions.filter(s => s.state === 'idle').length,
       problem: sessions.filter(s => s.state === 'stalled' || s.state === 'failed').length
     };
-    const labels = L().tabs || { all: 'Todas', working: 'Trabajando', waiting: 'Esperan', problem: 'Problema' };
+    const labels = L().tabs || LOCALES.en.tabs;
     segsEl.querySelectorAll('button[data-filter]').forEach(button => {
       const name = button.dataset.filter;
       button.textContent = labels[name] + ' (' + (counts[name] || 0) + ')';
@@ -1977,13 +1983,14 @@ _VIEW_HTML = """<!doctype html>
   const langBtn = document.getElementById('lang-btn');
   const pipBtn = document.getElementById('pip-btn');
   function syncLangBtn() {
+    document.documentElement.lang = currentLang;
     if (langBtn) langBtn.textContent = '🌐 ' + currentLang.toUpperCase();
     if (pipBtn) pipBtn.textContent = L().pipBtn;
   }
   syncLangBtn();
   if (langBtn) {
     langBtn.addEventListener('click', () => {
-      currentLang = currentLang === 'es' ? 'en' : 'es';
+      currentLang = currentLang === 'en' ? 'es' : 'en';
       try { localStorage.setItem('radar.lang', currentLang); } catch (_e) {}
       syncLangBtn();
       render();
@@ -2010,16 +2017,16 @@ _VIEW_HTML = """<!doctype html>
 
     g.fillStyle = '#e6edf3';
     g.font = '700 16px system-ui, sans-serif';
-    g.fillText('Radar · Siempre encima', 18, 32);
+    g.fillText(L().pipHeader, 18, 32);
 
     g.fillStyle = '#9aa4af';
     g.font = '600 12px monospace';
-    g.fillText(working + ' trabajando · ' + waiting + ' esperando · ' + stalled + ' colgadas', 18, 56);
+    g.fillText(working + ' ' + L().working + ' · ' + waiting + ' ' + L().waiting + ' · ' + stalled + ' ' + L().stalledMany, 18, 56);
 
     if (!list.length) {
       g.fillStyle = '#9aa4af';
       g.font = '500 14px system-ui, sans-serif';
-      g.fillText('Ninguna sesión activa en la ventana', 230, 240);
+      g.fillText(L().emptyAllTitle, 230, 240);
       return;
     }
 
@@ -2095,7 +2102,7 @@ _VIEW_HTML = """<!doctype html>
       render();
     } catch (error) {
       statusEl.dataset.state = 'error';
-      statusEl.textContent = 'sin conexión · ' + error.message;
+      statusEl.textContent = L().offline + ' · ' + error.message;
     }
   }
 

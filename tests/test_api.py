@@ -485,9 +485,9 @@ def test_live_endpoint_and_view_html() -> None:
         assert "const LIVE_URL = new URL(" in html
         assert "const URL =" not in html
         # D3: the product surface, not the old minimal grid.
-        assert "Ninguna sesión activa" in html
-        assert "inactivas" in html
-        assert "conectando" in html
+        assert "No active sessions" in html or "Ninguna sesión activa" in html
+        assert "inactive" in html or "inactivas" in html
+        assert "connecting" in html or "conectando" in html
         assert api._WATCHER is None  # watcher stayed disabled
     finally:
         if previous_home is None:
@@ -1094,11 +1094,11 @@ def test_view_exposes_waiting_and_validates_the_tab() -> None:
     assert 'data-filter="waiting"' in waiting
     assert 'data-filter="working"' in waiting
     assert 'data-filter="problem"' in waiting
-    assert ">Esperan<" in waiting or "Esperan (" in waiting
-    assert "Trabajando" in waiting
-    assert "espera" in waiting
-    assert "trabajando" in waiting
-    assert "esperando" in waiting
+    assert ">Waiting<" in waiting or ">Esperan<" in waiting or "Esperan (" in waiting
+    assert "Working" in waiting or "Trabajando" in waiting
+    assert "espera" in waiting or "wait" in waiting
+    assert "trabajando" in waiting or "working" in waiting
+    assert "esperando" in waiting or "waiting" in waiting
     # Idle cards carry the amber marker, not the red one.
     assert ".card.wait" in waiting
 

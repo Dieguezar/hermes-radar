@@ -192,7 +192,7 @@ test('interrupt aborts before the RPC when the generation moved', async () => {
 
   await assert.rejects(
     mod.interruptSession(ctx, freshRow({ execution_generation: 4 })),
-    /cambió de turno/
+    /changed turn/
   )
   assert.equal(calls.length, 0, 'the RPC must not fire for a stale row')
 })
@@ -220,14 +220,14 @@ test('interrupt refuses a row that left the window or stopped running', async ()
 
   await assert.rejects(
     mod.interruptSession({ rest: async () => ({ sessions: [] }) }, freshRow()),
-    /ya no está en la ventana/
+    /no longer in the window/
   )
   await assert.rejects(
     mod.interruptSession(
       { rest: async () => ({ sessions: [freshRow({ state: 'idle' })] }) },
       freshRow()
     ),
-    /ya no está corriendo/
+    /no longer running/
   )
   assert.equal(called, false)
 })
@@ -249,7 +249,7 @@ test('a not_interrupted receipt is an error, not a success', async () => {
   hostStub.request = async () => ({ status: 'not_interrupted' })
   await assert.rejects(
     mod.interruptSession({ rest: async () => ({ sessions: [freshRow()] }) }, freshRow()),
-    /no interrumpió/
+    /did not interrupt/
   )
 })
 
@@ -262,7 +262,7 @@ test('a stalled row reports how long it has been silent', () => {
     { state: 'stalled', last_activity_at: NOW_S - 720 },
     NOW_MS
   )
-  assert.equal(activity.text, 'sin latido hace 12 min')
+  assert.equal(activity.text, 'no heartbeat for 12 min')
   assert.equal(activity.warn, true)
   assert.equal(mod.fmtAgo(NOW_S - 720, NOW_MS), '12 min')
 })
@@ -285,7 +285,7 @@ test('the stop button is mounted without hover and the row has no role=button', 
   const stop = nodes.find(node => node.props && node.props.className === 'sp-stop')
   assert.ok(stop, 'the stop button must be in the tree before any hover')
   assert.equal(stop.type, 'button')
-  assert.match(stop.props['aria-label'], /^interrumpir /)
+  assert.match(stop.props['aria-label'], /^interrupt /)
   assert.notEqual(stop.props.disabled, true)
 
   const open = nodes.find(node => node.props && node.props.className === 'sp-open')
@@ -350,7 +350,7 @@ test('the footer names profile_errors instead of hiding them', () => {
   globalThis.__SP_STATE__ = [snapshot, false, {}]
   const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
   const text = strings(tree).join(' | ')
-  assert.match(text, /sin conexión · broken/)
+  assert.match(text, /offline · broken/)
 })
 
 test('the footer keeps no error segment when every profile loaded', () => {
@@ -363,7 +363,7 @@ test('the footer keeps no error segment when every profile loaded', () => {
   }
   globalThis.__SP_STATE__ = [snapshot, false, {}]
   const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
-  assert.doesNotMatch(strings(tree).join(' | '), /sin conexión/)
+  assert.doesNotMatch(strings(tree).join(' | '), /offline/)
 })
 
 // ---------------------------------------------------------------------------
@@ -564,7 +564,7 @@ test('a completed row is dimmed and drops the stop even if the backend said othe
   assert.ok(glyphNode, 'the row must paint a state glyph')
   assert.equal(glyphNode.props.state, 'done')
   const glyph = mod.StateGlyph({ state: 'done' })
-  assert.equal(glyph.props['aria-label'], 'terminada')
+  assert.equal(glyph.props['aria-label'], 'done')
   assert.match(glyph.props.style.color, /3fb950/i)
 })
 
@@ -588,7 +588,7 @@ test('a failed row is dimmed, red-tinted and has no stop control', () => {
   assert.ok(glyphNode, 'the row must paint a state glyph')
   assert.equal(glyphNode.props.state, 'failed')
   const glyph = mod.StateGlyph({ state: 'failed' })
-  assert.equal(glyph.props['aria-label'], 'fallida')
+  assert.equal(glyph.props['aria-label'], 'failed')
   assert.match(glyph.props.style.color, /f85149|destructive/i)
 })
 
@@ -632,7 +632,7 @@ test('the footer reads working, waiting and stalled', () => {
   }
   globalThis.__SP_STATE__ = [snapshot, false, {}]
   const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
-  assert.match(plainText(tree), /2 trabajando · 2 esperando · 1 colgadas/)
+  assert.match(plainText(tree), /2 working · 2 waiting · 1 stalled/)
 })
 
 test('the footer derives working and waiting when the payload predates them', () => {
@@ -660,10 +660,10 @@ test('the footer derives working and waiting when the payload predates them', ()
   }
   globalThis.__SP_STATE__ = [snapshot, false, {}]
   const tree = mod.RadarPane({ ctx: { rest: async () => snapshot } })
-  assert.match(plainText(tree), /2 trabajando · 2 esperando · 0 colgadas/)
+  assert.match(plainText(tree), /2 working · 2 waiting · 0 stalled/)
 })
 
-test('an idle floating row paints the amber espera badge', () => {
+test('an idle floating row paints the amber waiting badge', () => {
   globalThis.__SP_STATE__ = []
   const tree = mod.SessionRow({
     session: freshRow({ state: 'idle', can_interrupt: false }),
@@ -674,9 +674,9 @@ test('an idle floating row paints the amber espera badge', () => {
   })
 
   const text = strings(tree)
-  assert.ok(text.includes('espera'), JSON.stringify(text))
-  const badge = walk(tree).find(node => node.props && node.props.children === 'espera')
-  assert.ok(badge, 'the idle row needs an espera badge')
+  assert.ok(text.includes('waiting'), JSON.stringify(text))
+  const badge = walk(tree).find(node => node.props && node.props.children === 'waiting')
+  assert.ok(badge, 'the idle row needs a waiting badge')
   assert.match(String(badge.props.style.color), /d29922|amber/i)
   assert.match(String(tree.props.style.background), /d29922|amber/i)
 })
@@ -779,10 +779,10 @@ test('panelGroups groups running+queued, idle, stalled and terminal rows', () =>
   assert.deepEqual(byKey.waiting.items.map(item => item.id), ['i'])
   assert.deepEqual(byKey.stalled.items.map(item => item.id), ['s'])
   assert.deepEqual(byKey.finished.items.map(item => item.id), ['d', 'f'])
-  assert.equal(byKey.working.label, 'Trabajando')
-  assert.equal(byKey.waiting.label, 'Esperando')
-  assert.equal(byKey.stalled.label, 'Colgadas')
-  assert.equal(byKey.finished.label, 'Terminadas')
+  assert.equal(byKey.working.label, 'Working')
+  assert.equal(byKey.waiting.label, 'Waiting')
+  assert.equal(byKey.stalled.label, 'Stalled')
+  assert.equal(byKey.finished.label, 'Finished')
 
   const hidden = mod.panelGroups(sessions, { finished: false })
   assert.equal(hidden.some(group => group.key === 'finished'), false)
@@ -822,13 +822,12 @@ test('the panel header shows counters, filters and grouped rows', () => {
   ]
   const tree = mod.RadarPanel({ ctx: { rest: async () => snapshot } })
   const text = plainText(tree)
-  assert.match(text, /Trabajando/)
-  assert.match(text, /Esperando/)
-  assert.match(text, /Colgadas/)
-  assert.match(text, /Terminadas/)
-  assert.match(text, /Todas/)
-  assert.match(text, /Esperan/)
-  assert.match(text, /Problema/)
+  assert.match(text, /Working/)
+  assert.match(text, /Waiting/)
+  assert.match(text, /Stalled/)
+  assert.match(text, /Finished/)
+  assert.match(text, /All/)
+  assert.match(text, /Problem/)
   const tabs = walk(tree).filter(node => node.props && node.props['data-filter'])
   assert.deepEqual(
     tabs.map(node => node.props['data-filter']),
@@ -990,7 +989,7 @@ test('RadarPage renders the full-page header, search bar and Always-on-Top butto
   assert.ok(search, 'RadarPage renders a search input')
   const pip = nodes.find(node => node.props && String(node.props.className || '').includes('sp-pip'))
   assert.ok(pip, 'RadarPage renders the Always-on-Top PiP button')
-  assert.match(plainText(pip), /Siempre encima/)
+  assert.match(plainText(pip), /Always on Top/)
 })
 
 test('openRadarPage navigates to /radar when host.navigate is present', () => {
@@ -1045,10 +1044,10 @@ test('renderRadarPipCanvas paints counters and active sessions onto a 2D canvas'
   assert.equal(canvas.width, 720)
   assert.equal(canvas.height, 450)
   assert.deepEqual(summary, { workingCount: 1, waitingCount: 1, stalledCount: 1, rowCount: 3 })
-  assert.ok(texts.some(t => t.includes('Radar · Siempre encima')), JSON.stringify(texts))
+  assert.ok(texts.some(t => t.includes('Radar · Always on Top')), JSON.stringify(texts))
   assert.ok(texts.some(t => t.includes('Compilando módulo')), JSON.stringify(texts))
   assert.ok(texts.some(t => t.includes('Revisión lista')), JSON.stringify(texts))
-  assert.ok(texts.some(t => t.includes('! COLGADA')), JSON.stringify(texts))
+  assert.ok(texts.some(t => t.includes('! STALLED')), JSON.stringify(texts))
 })
 
 test('toggleRadarPip enters and exits Picture-in-Picture via canvas stream', async () => {
@@ -1157,20 +1156,25 @@ test('floating pane auto-hides when full view enters and restores when it exits'
 test('i18n switches between Spanish and English and allows registering new locales', () => {
   settingsStore.clear()
   try {
+    assert.equal(mod.getRadarLang({}), 'en')
+    assert.equal(mod.t('working'), 'Working')
+
+    // Switch to Spanish
+    assert.equal(mod.setRadarLang({}, 'es'), 'es')
     assert.equal(mod.getRadarLang({}), 'es')
     assert.equal(mod.t('working'), 'Trabajando')
+    assert.equal(mod.t('waiting'), 'Esperando')
+    assert.equal(mod.t('stalled'), 'Colgadas')
 
-    // Switch to English
+    // RadarPane renders in Spanish when lang is 'es'
+    globalThis.__SP_STATE__ = [F9_SNAPSHOT, false, {}]
+    const paneTree = mod.RadarPane({ ctx: { rest: async () => F9_SNAPSHOT } })
+    assert.match(plainText(paneTree), /1 trabajando · 0 esperando · 0 colgadas/)
+
+    // Switch back to English
     assert.equal(mod.setRadarLang({}, 'en'), 'en')
     assert.equal(mod.getRadarLang({}), 'en')
     assert.equal(mod.t('working'), 'Working')
-    assert.equal(mod.t('waiting'), 'Waiting')
-    assert.equal(mod.t('stalled'), 'Stalled')
-
-    // RadarPane renders in English when lang is 'en'
-    globalThis.__SP_STATE__ = [F9_SNAPSHOT, false, {}]
-    const paneTree = mod.RadarPane({ ctx: { rest: async () => F9_SNAPSHOT } })
-    assert.match(plainText(paneTree), /1 working · 0 waiting · 0 stalled/)
 
     // Register a custom locale (Portuguese) dynamically
     assert.equal(mod.registerRadarLocale('pt', { working: 'Trabalhando', workingLower: 'trabalhando' }), true)
@@ -1178,7 +1182,7 @@ test('i18n switches between Spanish and English and allows registering new local
     assert.equal(mod.t('waiting', 'pt'), 'Waiting', 'falls back to English base for missing keys')
   } finally {
     delete mod.LOCALES.pt
-    mod.setRadarLang({}, 'es')
+    mod.setRadarLang({}, 'en')
     settingsStore.clear()
   }
 })
@@ -1207,7 +1211,7 @@ test('extended WINDOW_CHOICES supports up to 24h (86400s) and empty state offers
   const tree = mod.RadarPanel({ ctx: { rest: async () => emptyWithDormant } })
   const expandBtn = walk(tree).find(node => node.props && node.props.className === 'sp-expand-window')
   assert.ok(expandBtn, 'empty state with dormant sessions must offer a 24h expand button')
-  assert.match(plainText(expandBtn), /24 h/)
+  assert.match(plainText(expandBtn), /24\s?h/i)
 })
 
 test('RadarPage renders the Bot Squad Roster and Telemetry pills when multiple bots and tokens exist', () => {

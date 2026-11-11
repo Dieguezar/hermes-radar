@@ -95,78 +95,6 @@ const WINDOW_CHOICES = [60, 180, 600, 1800, 3600, 86400]
 // ---------------------------------------------------------------------------
 
 const LOCALES = {
-  es: {
-    working: 'Trabajando',
-    workingLower: 'trabajando',
-    waiting: 'Esperando',
-    waitingShort: 'Esperan',
-    waitingLower: 'esperando',
-    waitBadge: 'espera',
-    stalled: 'Colgadas',
-    stalledOne: 'colgada',
-    stalledLower: 'colgadas',
-    finished: 'Terminadas',
-    all: 'Todas',
-    problem: 'Problema',
-    runningLabel: 'corriendo',
-    queuedLabel: 'en cola',
-    doneLabel: 'terminada',
-    failedLabel: 'fallida',
-    noHeartbeat: 'sin latido hace ',
-    waitingSlot: 'esperando slot',
-    waitingUser: 'esperando al usuario',
-    stop: 'parar',
-    confirmStop: '¿seguro?',
-    interrupted: 'interrumpida',
-    interruptAria: 'interrumpir ',
-    copy: 'copiar',
-    copied: 'copiado',
-    copyAria: 'copiar id de ',
-    emptyWindow: 'Ninguna sesión en la ventana',
-    emptyWindowPip: 'Ninguna sesión activa en la ventana',
-    dormantCount: ' inactivas',
-    dormantOutsidePip: ' inactivas fuera de la ventana',
-    expand24h: 'Ver últimas 24 h',
-    offline: 'sin conexión',
-    agoPrefix: 'hace ',
-    agoSuffix: 's',
-    sizeAria: 'tamaño ',
-    pipTitle: 'Siempre encima (Picture-in-Picture al minimizar)',
-    pipFullTitle: 'Mantener mini-ventana siempre encima aunque minimices Hermes',
-    pipButton: '📌 Siempre encima',
-    pipButtonActive: '📌 Siempre encima (activo)',
-    pipHeader: 'Radar · Siempre encima',
-    pipLive: ' en vivo',
-    pipFooterHint: 'Minimiza Hermes y esta ventana seguirá siempre visible',
-    pipBadgeStalled: '! COLGADA',
-    pipBadgeWait: 'ESPERA',
-    pipBadgeActive: '● ACTIVA',
-    pipBadgeQueue: '◷ COLA',
-    pipBadgeDone: '✓ LISTA',
-    pipBadgeFailed: '✕ FALLÓ',
-    openPageTitle: 'Abrir Radar en vista completa (/radar)',
-    expandPanelTitle: 'Expandir en el panel lateral',
-    sidePanelBtn: '⤢ Panel lateral',
-    sidePanelTitle: 'Mostrar también en el panel lateral derecho',
-    searchPlaceholder: 'Filtrar por sesión, herramienta, perfil, modelo o rama…',
-    searchAria: 'buscar sesiones',
-    settings: 'Ajustes',
-    profilesLabel: 'Perfiles',
-    profilesAll: 'Todos',
-    profilesCurrent: 'Solo el actual',
-    windowLabel: 'Ventana',
-    showFinishedLabel: 'Mostrar terminadas',
-    yes: 'sí',
-    no: 'no',
-    densityLabel: 'Densidad',
-    densityCompact: 'compacta',
-    densityComfortable: 'cómoda',
-    langLabel: 'Idioma',
-    windowPrefix: 'ventana ',
-    squadAll: 'Todos los bots',
-    cmdOpenLabel: 'Radar: Abrir vista completa',
-    cmdPipLabel: 'Radar: Siempre encima (Picture-in-Picture)'
-  },
   en: {
     working: 'Working',
     workingLower: 'working',
@@ -203,6 +131,7 @@ const LOCALES = {
     agoPrefix: '',
     agoSuffix: 's ago',
     sizeAria: 'size ',
+    pipAria: 'always on top',
     pipTitle: 'Always on Top (Picture-in-Picture when minimized)',
     pipFullTitle: 'Keep mini-window always on top even when Hermes is minimized',
     pipButton: '📌 Always on Top',
@@ -216,7 +145,9 @@ const LOCALES = {
     pipBadgeQueue: '◷ QUEUED',
     pipBadgeDone: '✓ DONE',
     pipBadgeFailed: '✕ FAILED',
+    openPageAria: 'open full view',
     openPageTitle: 'Open Radar full view (/radar)',
+    expandPanelAria: 'expand side panel',
     expandPanelTitle: 'Expand in side panel',
     sidePanelBtn: '⤢ Side panel',
     sidePanelTitle: 'Also show in right side panel',
@@ -237,11 +168,106 @@ const LOCALES = {
     windowPrefix: 'window ',
     squadAll: 'All bots',
     cmdOpenLabel: 'Radar: Open full view',
-    cmdPipLabel: 'Radar: Always on Top (Picture-in-Picture)'
+    cmdPipLabel: 'Radar: Always on Top (Picture-in-Picture)',
+    errCrossProfile: 'this Desktop cannot route RPC to another profile',
+    errNoRoute: 'no route to profile ',
+    errConfirmTurn: 'could not confirm turn: ',
+    errGoneFromWindow: 'session is no longer in the window',
+    errNoLongerRunning: 'session is no longer running',
+    errChangedTurn: 'session changed turn; please try again',
+    errNotInterrupted: 'gateway did not interrupt the turn',
+    errPipUnavailable: 'Picture-in-Picture is not available in this environment',
+    errPipActivate: 'Could not enable Always on Top: ',
+    errOpenSession: 'Could not open session: '
+  },
+  es: {
+    working: 'Trabajando',
+    workingLower: 'trabajando',
+    waiting: 'Esperando',
+    waitingShort: 'Esperan',
+    waitingLower: 'esperando',
+    waitBadge: 'espera',
+    stalled: 'Colgadas',
+    stalledOne: 'colgada',
+    stalledLower: 'colgadas',
+    finished: 'Terminadas',
+    all: 'Todas',
+    problem: 'Problema',
+    runningLabel: 'corriendo',
+    queuedLabel: 'en cola',
+    doneLabel: 'terminada',
+    failedLabel: 'fallida',
+    noHeartbeat: 'sin latido hace ',
+    waitingSlot: 'esperando slot',
+    waitingUser: 'esperando al usuario',
+    stop: 'parar',
+    confirmStop: '¿seguro?',
+    interrupted: 'interrumpida',
+    interruptAria: 'interrumpir ',
+    copy: 'copiar',
+    copied: 'copiado',
+    copyAria: 'copiar id de ',
+    emptyWindow: 'Ninguna sesión en la ventana',
+    emptyWindowPip: 'Ninguna sesión activa en la ventana',
+    dormantCount: ' inactivas',
+    dormantOutsidePip: ' inactivas fuera de la ventana',
+    expand24h: 'Ver últimas 24 h',
+    offline: 'sin conexión',
+    agoPrefix: 'hace ',
+    agoSuffix: 's',
+    sizeAria: 'tamaño ',
+    pipAria: 'siempre encima',
+    pipTitle: 'Siempre encima (Picture-in-Picture al minimizar)',
+    pipFullTitle: 'Mantener mini-ventana siempre encima aunque minimices Hermes',
+    pipButton: '📌 Siempre encima',
+    pipButtonActive: '📌 Siempre encima (activo)',
+    pipHeader: 'Radar · Siempre encima',
+    pipLive: ' en vivo',
+    pipFooterHint: 'Minimiza Hermes y esta ventana seguirá siempre visible',
+    pipBadgeStalled: '! COLGADA',
+    pipBadgeWait: 'ESPERA',
+    pipBadgeActive: '● ACTIVA',
+    pipBadgeQueue: '◷ COLA',
+    pipBadgeDone: '✓ LISTA',
+    pipBadgeFailed: '✕ FALLÓ',
+    openPageAria: 'abrir vista completa',
+    openPageTitle: 'Abrir Radar en vista completa (/radar)',
+    expandPanelAria: 'expandir panel lateral',
+    expandPanelTitle: 'Expandir en el panel lateral',
+    sidePanelBtn: '⤢ Panel lateral',
+    sidePanelTitle: 'Mostrar también en el panel lateral derecho',
+    searchPlaceholder: 'Filtrar por sesión, herramienta, perfil, modelo o rama…',
+    searchAria: 'buscar sesiones',
+    settings: 'Ajustes',
+    profilesLabel: 'Perfiles',
+    profilesAll: 'Todos',
+    profilesCurrent: 'Solo el actual',
+    windowLabel: 'Ventana',
+    showFinishedLabel: 'Mostrar terminadas',
+    yes: 'sí',
+    no: 'no',
+    densityLabel: 'Densidad',
+    densityCompact: 'compacta',
+    densityComfortable: 'cómoda',
+    langLabel: 'Idioma',
+    windowPrefix: 'ventana ',
+    squadAll: 'Todos los bots',
+    cmdOpenLabel: 'Radar: Abrir vista completa',
+    cmdPipLabel: 'Radar: Siempre encima (Picture-in-Picture)',
+    errCrossProfile: 'este Desktop no puede enrutar RPC a otro perfil',
+    errNoRoute: 'sin ruta al perfil ',
+    errConfirmTurn: 'no se pudo confirmar el turno: ',
+    errGoneFromWindow: 'la sesión ya no está en la ventana',
+    errNoLongerRunning: 'la sesión ya no está corriendo',
+    errChangedTurn: 'la sesión cambió de turno; vuelve a intentarlo',
+    errNotInterrupted: 'el gateway no interrumpió el turno',
+    errPipUnavailable: 'Picture-in-Picture no está disponible en este entorno',
+    errPipActivate: 'No se pudo activar Siempre encima: ',
+    errOpenSession: 'No se pudo abrir la sesión: '
   }
 }
 
-let currentLang = 'es'
+let currentLang = 'en'
 const LANG_LISTENERS = new Set()
 
 function normalizeLang(value) {
@@ -249,7 +275,7 @@ function normalizeLang(value) {
     .trim()
     .toLowerCase()
     .slice(0, 2)
-  return LOCALES[code] ? code : 'es'
+  return LOCALES[code] ? code : 'en'
 }
 
 /**
@@ -300,7 +326,7 @@ function cycleRadarLang(ctx) {
   const codes = Object.keys(LOCALES)
   const active = getRadarLang(ctx)
   const idx = codes.indexOf(active)
-  const next = codes[(idx + 1) % codes.length] || 'es'
+  const next = codes[(idx + 1) % codes.length] || 'en'
   return setRadarLang(ctx, next)
 }
 
@@ -313,8 +339,8 @@ function subscribeRadarLang(listener) {
 }
 
 function t(key, lang = currentLang) {
-  const pack = LOCALES[lang] || LOCALES.es
-  return pack[key] !== undefined ? pack[key] : LOCALES.es[key] || key
+  const pack = LOCALES[lang] || LOCALES.en
+  return pack[key] !== undefined ? pack[key] : LOCALES.en[key] || key
 }
 
 function fmtTokens(value) {
@@ -802,18 +828,18 @@ async function sessionRpc(session, method, params) {
   const active = activeProfile()
   if (profile && active && profile !== active) {
     if (typeof host.profileRoutes !== 'function' || typeof host.requestProfile !== 'function') {
-      throw new Error('este Desktop no puede enrutar RPC a otro perfil')
+      throw new Error(t('errCrossProfile'))
     }
     let routes = []
     try {
       routes = await host.profileRoutes()
     } catch (error) {
-      throw new Error('sin ruta al perfil ' + profile + ': ' + messageOf(error))
+      throw new Error(t('errNoRoute') + profile + ': ' + messageOf(error))
     }
     const route = (Array.isArray(routes) ? routes : []).find(
       item => String((item && (item.targetProfile || item.profile)) || '').trim() === profile
     )
-    if (!route) throw new Error('sin ruta al perfil ' + profile)
+    if (!route) throw new Error(t('errNoRoute') + profile)
     return host.requestProfile(route, method, params, RPC_TIMEOUT_MS, { spawnPriority: 'foreground' })
   }
   return host.request(method, params)
@@ -835,20 +861,20 @@ async function interruptSession(ctx, session, livePath = LIVE_PATH) {
     // quick view keeps the all/180 default it has always used.
     fresh = await ctx.rest(livePath)
   } catch (error) {
-    throw new Error('no se pudo confirmar el turno: ' + messageOf(error))
+    throw new Error(t('errConfirmTurn') + messageOf(error))
   }
 
   const row = (fresh && Array.isArray(fresh.sessions) ? fresh.sessions : []).find(
     item => item.id === session.id
   )
-  if (!row) throw new Error('la sesión ya no está en la ventana')
+  if (!row) throw new Error(t('errGoneFromWindow'))
   if (row.state !== 'running' && row.state !== 'stalled') {
-    throw new Error('la sesión ya no está corriendo')
+    throw new Error(t('errNoLongerRunning'))
   }
 
   const expected = normalizeGeneration(session.execution_generation)
   const current = normalizeGeneration(row.execution_generation)
-  if (expected !== current) throw new Error('la sesión cambió de turno; vuelve a intentarlo')
+  if (expected !== current) throw new Error(t('errChangedTurn'))
 
   // The canonical wire contract for `session.interrupt` is a closed key set:
   // `session_id` (+ the optional profile route). Sending `execution_generation`
@@ -856,7 +882,7 @@ async function interruptSession(ctx, session, livePath = LIVE_PATH) {
   // the fence stays client-side: we already re-read `/live` and compared above.
   const result = await sessionRpc(session, 'session.interrupt', { session_id: session.id })
   if (result && (result.status === 'not_interrupted' || result.interrupted === false)) {
-    throw new Error('el gateway no interrumpió el turno')
+    throw new Error(t('errNotInterrupted'))
   }
   return result
 }
@@ -1403,7 +1429,7 @@ async function toggleRadarPip(ctx, snapshot) {
       await PIP_STATE.video.play()
     }
     if (typeof PIP_STATE.video.requestPictureInPicture !== 'function') {
-      throw new Error('Picture-in-Picture no está disponible en este entorno')
+      throw new Error(t('errPipUnavailable'))
     }
     await PIP_STATE.video.requestPictureInPicture()
     PIP_STATE.active = true
@@ -1433,7 +1459,7 @@ async function toggleRadarPip(ctx, snapshot) {
   } catch (error) {
     stopRadarPipLoop()
     if (typeof host.notify === 'function') {
-      host.notify({ kind: 'error', message: 'No se pudo activar Siempre encima: ' + messageOf(error) })
+      host.notify({ kind: 'error', message: t('errPipActivate') + messageOf(error) })
     }
     return false
   }
@@ -1710,7 +1736,7 @@ function RadarPane({ ctx }) {
     const request = profile ? host.openSession(session.id, { profile }) : host.openSession(session.id)
     Promise.resolve(request).catch(error => {
       if (typeof host.notify === 'function') {
-        host.notify({ kind: 'error', message: 'No se pudo abrir la sesión: ' + messageOf(error) })
+        host.notify({ kind: 'error', message: t('errOpenSession') + messageOf(error) })
       }
     })
   }, [])
@@ -1884,7 +1910,7 @@ function RadarPane({ ctx }) {
               type: 'button',
               className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
               'aria-pressed': pipActive ? 'true' : 'false',
-              'aria-label': 'siempre encima',
+              'aria-label': t('pipAria', lang),
               title: t('pipTitle', lang),
               onClick: () => {
                 toggleRadarPip(ctx, snapshot)
@@ -1913,7 +1939,7 @@ function RadarPane({ ctx }) {
                 {
                   type: 'button',
                   className: 'sp-page',
-                  'aria-label': 'abrir vista completa',
+                  'aria-label': t('openPageAria', lang),
                   title: t('openPageTitle', lang),
                   onClick: openRadarPage,
                   children: '⊞',
@@ -1940,7 +1966,7 @@ function RadarPane({ ctx }) {
                 {
                   type: 'button',
                   className: 'sp-expand',
-                  'aria-label': 'expandir panel lateral',
+                  'aria-label': t('expandPanelAria', lang),
                   title: t('expandPanelTitle', lang),
                   onClick: expandRadarPanel,
                   children: '⤢',
@@ -2444,7 +2470,7 @@ function RadarPanel({ ctx, fullPage = false }) {
     const request = profile ? host.openSession(session.id, { profile }) : host.openSession(session.id)
     Promise.resolve(request).catch(error => {
       if (typeof host.notify === 'function') {
-        host.notify({ kind: 'error', message: 'No se pudo abrir la sesión: ' + messageOf(error) })
+        host.notify({ kind: 'error', message: t('errOpenSession') + messageOf(error) })
       }
     })
   }, [])
@@ -2739,7 +2765,7 @@ function RadarPanel({ ctx, fullPage = false }) {
                 type: 'button',
                 className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
                 'aria-pressed': pipActive ? 'true' : 'false',
-                'aria-label': 'siempre encima',
+                'aria-label': t('pipAria', lang),
                 title: t('pipFullTitle', lang),
                 onClick: () => {
                   toggleRadarPip(ctx, snapshot)
@@ -2764,7 +2790,7 @@ function RadarPanel({ ctx, fullPage = false }) {
                 ? jsx('button', {
                     type: 'button',
                     className: 'sp-expand',
-                    'aria-label': 'expandir panel lateral',
+                    'aria-label': t('expandPanelAria', lang),
                     title: t('sidePanelTitle', lang),
                     onClick: expandRadarPanel,
                     style: {
@@ -2857,7 +2883,7 @@ function RadarPanel({ ctx, fullPage = false }) {
                 type: 'button',
                 className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
                 'aria-pressed': pipActive ? 'true' : 'false',
-                'aria-label': 'siempre encima',
+                'aria-label': t('pipAria', lang),
                 title: t('pipTitle', lang),
                 onClick: () => {
                   toggleRadarPip(ctx, snapshot)
