@@ -35,21 +35,30 @@ profile's `state.db` on every refresh.
 * Paints the **real bot avatar**, not a generic initial: the same
   `assets/avatar.png` the Bots roster shows, clipped to the profile's stored
   silhouette, plus its `ui_meta['hermes-bots']` title, shape and color.
-* Ships a Desktop half (`desktop/plugin.js`) with three integrated surfaces plus Always-on-Top:
+* Ships a Desktop half (`desktop/plugin.js`) with four integrated surfaces, bilingual i18n (`ES` / `EN`), and extensible localization:
   * `radar` — the floating quick view (`placement: 'floating'`, anchored
     bottom-right) at one of four sizes, S 320 × 214 by default, one compact row
-    per session.
+    per session. Automatically hides whenever the right side panel or the
+    full-page `/radar` view is open so views never overlap, and restores when
+    returning to chat.
   * `radar:panel` — the full 380 px right panel (`placement: 'right'`) with
-    grouped rows, filter tabs, large counters, settings, row actions and the
-    profile's real avatar.
+    grouped rows, filter tabs, large counters, settings, telemetry chips
+    (subagents `⑂`, tool calls `⚙`, tokens `↑/↓`, git branch `⎇`), row actions
+    and the profile's real avatar (PNG or vector `blobatarSvg`).
   * `nav` (`sidebar.nav`) + `page` (`routes` at `/radar`) — **Left Sidebar**
     navigation entry (`Radar` with `pulse` icon) that opens a full-page
-    multi-column Radar workspace with instant search, counters, and right-click
-    *Open in split* support.
-  * **📌 Siempre encima (Always-on-Top Picture-in-Picture)** — 1-click native
+    multi-column Radar workspace featuring a **Bot Squad Roster** bar (1-click
+    visual filter by bot profile), aggregate token & tool telemetry pills,
+    instant search, and right-click *Open in split* support.
+  * **📌 Siempre encima / Always on Top (Picture-in-Picture)** — 1-click native
     Chromium Picture-in-Picture mini-window (`canvas.captureStream` →
     `video.requestPictureInPicture()`) that floats on top of all OS windows even
     when Hermes Desktop is minimized.
+  * **🌐 Bilingual & Extensible i18n (`ES` / `EN` + `registerRadarLocale`)** —
+    1-click language switch (`ES` / `EN`) across the floating card, side panel,
+    full-page `/radar`, Picture-in-Picture canvas, and `/view` web mirror,
+    persisted under `radar.lang`. Adding new languages takes a single dictionary
+    entry in `LOCALES` or calling `registerRadarLocale(code, strings)`.
 * Emits `plugin.radar.changed` at most once every 2 s, and only when
   the visible snapshot changed.
 
@@ -107,14 +116,16 @@ a hung turn now. Only a recent expired lease paints red.
   (`hace …`, falling back to elapsed) and three actions: **open**, **parar**
   (running/stalled only) and **copiar** the session id (`copiado` confirms for a
   moment).
-* Settings in **Ajustes**, persisted through the verified `ctx.storage` API
+* Settings in **Ajustes / Settings**, persisted through the verified `ctx.storage` API
   under `radar.*`:
-  * Perfiles: `Todos` / `Solo el actual` (`radar.profiles`).
-  * Ventana: `1 min` / `3 min` / `10 min` (`radar.window`).
-  * Mostrar terminadas: sí / no (`radar.finished`).
-  * Densidad: compacta / cómoda (`radar.density`).
-  The panel requests `/live?profiles=all|current&window=60|180|600` from those
-  values.
+  * Idioma / Language: `ES` / `EN` (`radar.lang`).
+  * Perfiles / Profiles: `Todos` / `Solo el actual` (`radar.profiles`).
+  * Ventana / Window: `1 min` / `3 min` / `10 min` / `30 min` / `1 h` / `24 h` (`radar.window`).
+  * Mostrar terminadas / Show finished: sí / no (`radar.finished`).
+  * Densidad / Density: compacta / cómoda (`radar.density`).
+  The panel requests `/live?profiles=all|current&window=60|180|600|1800|3600|86400` from those
+  values, and offers a 1-click **Ver últimas 24 h / View last 24h** button when
+  recent sessions are outside a shorter window.
 * Both panes share the stop fence: before sending the interrupt they re-read
   `/live` with their current query and abort when the row disappeared, left
   `running`/`stalled`, or advanced to another `execution_generation`. That is

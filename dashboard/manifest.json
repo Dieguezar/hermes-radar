@@ -3,6 +3,6 @@
   "label": "Radar",
   "description": "Radar — live panel of every Hermes session across profiles, with a two-step stop for a hung turn.",
   "icon": "Activity",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "api": "plugin_api.py"
 }

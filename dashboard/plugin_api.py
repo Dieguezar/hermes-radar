@@ -1545,6 +1545,7 @@ _VIEW_HTML = """<!doctype html>
     </div>
     <span class="live" id="live-pill"><i aria-hidden="true"></i><span id="live-label">0 live</span></span>
     <span class="status" id="status">conectando…</span>
+    <button class="pip-btn" id="lang-btn" type="button" title="Switch language / Cambiar idioma">🌐 ES</button>
     <button class="pip-btn" id="pip-btn" type="button" aria-pressed="false" title="Mantener mini-ventana siempre encima (Picture-in-Picture)">📌 Siempre encima</button>
   </header>
 
@@ -1606,6 +1607,77 @@ _VIEW_HTML = """<!doctype html>
 
   let filter = INITIAL_TAB;
   let latest = null;
+  let currentLang = (new URLSearchParams(window.location.search).get('lang') || localStorage.getItem('radar.lang') || 'es').toLowerCase() === 'en' ? 'en' : 'es';
+
+  const LOCALES = {
+    es: {
+      pipBtn: '📌 Siempre encima',
+      tabs: { all: 'Todas', working: 'Trabajando', waiting: 'Esperan', problem: 'Problema' },
+      waitBadge: 'espera',
+      noModel: 'sin modelo',
+      doneFoot: '✓ completada',
+      failedFoot: '✗ fallida',
+      noHeartbeat: 'sin latido hace ',
+      queuedAct: 'admisión en cola',
+      waitingUser: 'esperando al usuario',
+      sessionOne: 'sesión',
+      sessionMany: 'sesiones',
+      working: 'trabajando',
+      waiting: 'esperando',
+      stalledOne: 'colgada',
+      stalledMany: 'colgadas',
+      dormantOne: 'inactiva',
+      dormantMany: 'inactivas',
+      windowPrefix: 'ventana ',
+      noProfiles: 'sin perfiles',
+      noProfilesTitle: 'ningún perfil seleccionado',
+      profilesMany: ' perfiles',
+      emptyAllTitle: 'Ninguna sesión activa',
+      emptyAllDormant: ' inactivas, fuera de la ventana',
+      emptyAllNone: 'Sin sesiones en el historial reciente',
+      emptyProbTitle: 'Nada colgado',
+      emptyProbSub: 'Ninguna sesión necesita atención',
+      emptyWaitTitle: 'Nadie espera',
+      emptyWaitSub: 'Ningún turno esperando al usuario',
+      emptyWorkTitle: 'Ninguna sesión trabajando',
+      updatedAgo: 'actualizado hace ',
+      cadencePrefix: 'cada '
+    },
+    en: {
+      pipBtn: '📌 Always on Top',
+      tabs: { all: 'All', working: 'Working', waiting: 'Waiting', problem: 'Problem' },
+      waitBadge: 'waiting',
+      noModel: 'no model',
+      doneFoot: '✓ completed',
+      failedFoot: '✗ failed',
+      noHeartbeat: 'no heartbeat for ',
+      queuedAct: 'queued admission',
+      waitingUser: 'waiting for user',
+      sessionOne: 'session',
+      sessionMany: 'sessions',
+      working: 'working',
+      waiting: 'waiting',
+      stalledOne: 'stalled',
+      stalledMany: 'stalled',
+      dormantOne: 'dormant',
+      dormantMany: 'dormant',
+      windowPrefix: 'window ',
+      noProfiles: 'no profiles',
+      noProfilesTitle: 'no profile selected',
+      profilesMany: ' profiles',
+      emptyAllTitle: 'No active sessions',
+      emptyAllDormant: ' dormant, outside window',
+      emptyAllNone: 'No sessions in recent history',
+      emptyProbTitle: 'Nothing stalled',
+      emptyProbSub: 'No session needs attention',
+      emptyWaitTitle: 'Nobody waiting',
+      emptyWaitSub: 'No turn waiting on user',
+      emptyWorkTitle: 'No session working',
+      updatedAgo: 'updated ',
+      cadencePrefix: 'every '
+    }
+  };
+  function L() { return LOCALES[currentLang] || LOCALES.es; }
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -1652,13 +1724,13 @@ _VIEW_HTML = """<!doctype html>
 
   function activityText(session) {
     if (session.state === 'stalled') {
-      return 'sin latido hace ' + fmtAgo(session.last_activity_at);
+      return L().noHeartbeat + fmtAgo(session.last_activity_at);
     }
     if (session.state === 'queued') {
-      return session.activity || 'admisión en cola';
+      return session.activity || L().queuedAct;
     }
     if (session.activity && session.activity !== session.tool) return session.activity;
-    if (session.state === 'idle') return 'esperando al usuario';
+    if (session.state === 'idle') return L().waitingUser;
     return '';
   }
 
@@ -1737,11 +1809,11 @@ _VIEW_HTML = """<!doctype html>
     const body = el('div', 'rbody');
     const name = el('div', 'rname');
     name.appendChild(el('h2', null, session.title || session.id));
-    if (session.state === 'idle') name.appendChild(el('span', 'badge', 'espera'));
+    if (session.state === 'idle') name.appendChild(el('span', 'badge', L().waitBadge));
     body.appendChild(name);
 
     const metaLine = el('div', 'meta');
-    metaLine.appendChild(el('em', null, session.model || 'sin modelo'));
+    metaLine.appendChild(el('em', null, session.model || L().noModel));
     metaLine.appendChild(document.createTextNode(' · ' + fmtClock(session.elapsed_s)));
     // The profile badge lives on the metadata line: inside the title row it
     // competed with the title and moved the heading's start between cards.
@@ -1762,7 +1834,7 @@ _VIEW_HTML = """<!doctype html>
     const foot = el('div', 'foot');
     if (session.state === 'done' || session.state === 'failed') {
       foot.appendChild(el('span', session.state === 'done' ? 'ok' : 'warn',
-        session.state === 'done' ? '✓ completada' : '✗ fallida'));
+        session.state === 'done' ? L().doneFoot : L().failedFoot));
     }
     if (session.tools) {
       foot.appendChild(el('span', null,
@@ -1805,15 +1877,15 @@ _VIEW_HTML = """<!doctype html>
       item.appendChild(document.createTextNode(' ' + (value === 1 ? one : many)));
       summaryEl.appendChild(item);
     };
-    add(t.sessions, 'sesión', 'sesiones', null, true);
+    add(t.sessions, L().sessionOne, L().sessionMany, null, true);
     // F8: lead with work in progress and turns waiting on the user. Both are
     // derived from the per-state counters when an older payload omits them.
     const working = t.working !== undefined ? t.working : (t.running || 0) + (t.queued || 0);
     const waiting = t.waiting !== undefined ? t.waiting : (t.idle || 0);
-    add(working, 'trabajando', 'trabajando');
-    add(waiting, 'esperando', 'esperando', 'wait');
-    add(t.stalled, 'colgada', 'colgadas', t.stalled ? 'hot' : null);
-    add(t.dormant, 'inactiva', 'inactivas', 'calm');
+    add(working, L().working, L().working);
+    add(waiting, L().waiting, L().waiting, 'wait');
+    add(t.stalled, L().stalledOne, L().stalledMany, t.stalled ? 'hot' : null);
+    add(t.dormant, L().dormantOne, L().dormantMany, 'calm');
 
     liveLabel.textContent = (t.live || 0) + ' live';
     livePill.classList.toggle('warn', Boolean(t.stalled));
@@ -1828,7 +1900,7 @@ _VIEW_HTML = """<!doctype html>
       waiting: sessions.filter(s => s.state === 'idle').length,
       problem: sessions.filter(s => s.state === 'stalled' || s.state === 'failed').length
     };
-    const labels = { all: 'Todas', working: 'Trabajando', waiting: 'Esperan', problem: 'Problema' };
+    const labels = L().tabs || { all: 'Todas', working: 'Trabajando', waiting: 'Esperan', problem: 'Problema' };
     segsEl.querySelectorAll('button[data-filter]').forEach(button => {
       const name = button.dataset.filter;
       button.textContent = labels[name] + ' (' + (counts[name] || 0) + ')';
@@ -1840,18 +1912,18 @@ _VIEW_HTML = """<!doctype html>
     const names = Array.isArray(data.profiles) ? data.profiles : [];
     scopeEl.replaceChildren();
     scopeEl.appendChild(document.createTextNode(
-      'ventana ' + (data.window_s || WINDOW) + ' s · '
+      L().windowPrefix + (data.window_s || WINDOW) + ' s · '
     ));
     if (!names.length) {
       // ``?profiles=none`` is a real selection, not a missing one: never leave
       // a dangling "perfiles: " with nothing after it.
-      const none = el('span', 'chip', 'sin perfiles');
-      none.title = 'ningún perfil seleccionado';
+      const none = el('span', 'chip', L().noProfiles);
+      none.title = L().noProfilesTitle;
       scopeEl.appendChild(none);
       return;
     }
     const chip = el('span', 'chip',
-      names.length === 1 ? names[0] : names.length + ' perfiles');
+      names.length === 1 ? names[0] : names.length + L().profilesMany);
     chip.title = names.join(', ');
     scopeEl.appendChild(chip);
   }
@@ -1868,18 +1940,18 @@ _VIEW_HTML = """<!doctype html>
       const empty = el('div', 'empty');
       const dormant = (data.totals || {}).dormant || 0;
       if (filter === 'all') {
-        empty.appendChild(el('strong', null, 'Ninguna sesión activa'));
+        empty.appendChild(el('strong', null, L().emptyAllTitle));
         empty.appendChild(el('span', null,
-          dormant ? dormant + ' inactivas, fuera de la ventana' : 'Sin sesiones en el historial reciente'));
+          dormant ? dormant + L().emptyAllDormant : L().emptyAllNone));
       } else if (filter === 'problem') {
-        empty.appendChild(el('strong', null, 'Nada colgado'));
-        empty.appendChild(el('span', null, 'Ninguna sesión necesita atención'));
+        empty.appendChild(el('strong', null, L().emptyProbTitle));
+        empty.appendChild(el('span', null, L().emptyProbSub));
       } else if (filter === 'waiting') {
-        empty.appendChild(el('strong', null, 'Nadie espera'));
-        empty.appendChild(el('span', null, 'Ningún turno esperando al usuario'));
+        empty.appendChild(el('strong', null, L().emptyWaitTitle));
+        empty.appendChild(el('span', null, L().emptyWaitSub));
       } else {
-        empty.appendChild(el('strong', null, 'Ninguna sesión trabajando'));
-        empty.appendChild(el('span', null, dormant + ' inactivas'));
+        empty.appendChild(el('strong', null, L().emptyWorkTitle));
+        empty.appendChild(el('span', null, dormant + ' ' + L().dormantMany));
       }
       grid.appendChild(empty);
     } else {
@@ -1893,16 +1965,30 @@ _VIEW_HTML = """<!doctype html>
       : '';
 
     statusEl.dataset.state = 'ok';
-    statusEl.textContent = 'actualizado hace ' + fmtAgo(data.generated_at);
+    statusEl.textContent = L().updatedAgo + fmtAgo(data.generated_at);
 
     renderScope(data);
-    cadenceEl.textContent = 'cada ' + Math.round(REFRESH / 1000) + ' s';
+    cadenceEl.textContent = L().cadencePrefix + Math.round(REFRESH / 1000) + ' s';
     if (pipCanvas && document.pictureInPictureElement === pipVideo) {
       drawPipCanvas(data);
     }
   }
 
+  const langBtn = document.getElementById('lang-btn');
   const pipBtn = document.getElementById('pip-btn');
+  function syncLangBtn() {
+    if (langBtn) langBtn.textContent = '🌐 ' + currentLang.toUpperCase();
+    if (pipBtn) pipBtn.textContent = L().pipBtn;
+  }
+  syncLangBtn();
+  if (langBtn) {
+    langBtn.addEventListener('click', () => {
+      currentLang = currentLang === 'es' ? 'en' : 'es';
+      try { localStorage.setItem('radar.lang', currentLang); } catch (_e) {}
+      syncLangBtn();
+      render();
+    });
+  }
   let pipCanvas = null;
   let pipVideo = null;
   let pipStream = null;

@@ -26,7 +26,7 @@ import { jsx, jsxs } from 'react/jsx-runtime'
 
 const PLUGIN_ID = 'radar'
 const PLUGIN_NAME = 'Radar'
-const VERSION = '0.7.1'
+const VERSION = '0.8.0'
 
 const SIDEBAR_NAV_AREA = 'sidebar.nav'
 const ROUTES_AREA = 'routes'
@@ -76,7 +76,8 @@ const SETTING_KEYS = {
   window: 'radar.window',
   finished: 'radar.finished',
   density: 'radar.density',
-  size: 'radar.size'
+  size: 'radar.size',
+  lang: 'radar.lang'
 }
 
 const DEFAULT_SETTINGS = {
@@ -87,7 +88,241 @@ const DEFAULT_SETTINGS = {
   density: 'comfortable'
 }
 
-const WINDOW_CHOICES = [60, 180, 600]
+const WINDOW_CHOICES = [60, 180, 600, 1800, 3600, 86400]
+
+// ---------------------------------------------------------------------------
+// Internationalization (i18n) — Extensible locale dictionary (ES / EN + more)
+// ---------------------------------------------------------------------------
+
+const LOCALES = {
+  es: {
+    working: 'Trabajando',
+    workingLower: 'trabajando',
+    waiting: 'Esperando',
+    waitingShort: 'Esperan',
+    waitingLower: 'esperando',
+    waitBadge: 'espera',
+    stalled: 'Colgadas',
+    stalledOne: 'colgada',
+    stalledLower: 'colgadas',
+    finished: 'Terminadas',
+    all: 'Todas',
+    problem: 'Problema',
+    runningLabel: 'corriendo',
+    queuedLabel: 'en cola',
+    doneLabel: 'terminada',
+    failedLabel: 'fallida',
+    noHeartbeat: 'sin latido hace ',
+    waitingSlot: 'esperando slot',
+    waitingUser: 'esperando al usuario',
+    stop: 'parar',
+    confirmStop: '¿seguro?',
+    interrupted: 'interrumpida',
+    interruptAria: 'interrumpir ',
+    copy: 'copiar',
+    copied: 'copiado',
+    copyAria: 'copiar id de ',
+    emptyWindow: 'Ninguna sesión en la ventana',
+    emptyWindowPip: 'Ninguna sesión activa en la ventana',
+    dormantCount: ' inactivas',
+    dormantOutsidePip: ' inactivas fuera de la ventana',
+    expand24h: 'Ver últimas 24 h',
+    offline: 'sin conexión',
+    agoPrefix: 'hace ',
+    agoSuffix: 's',
+    sizeAria: 'tamaño ',
+    pipTitle: 'Siempre encima (Picture-in-Picture al minimizar)',
+    pipFullTitle: 'Mantener mini-ventana siempre encima aunque minimices Hermes',
+    pipButton: '📌 Siempre encima',
+    pipButtonActive: '📌 Siempre encima (activo)',
+    pipHeader: 'Radar · Siempre encima',
+    pipLive: ' en vivo',
+    pipFooterHint: 'Minimiza Hermes y esta ventana seguirá siempre visible',
+    pipBadgeStalled: '! COLGADA',
+    pipBadgeWait: 'ESPERA',
+    pipBadgeActive: '● ACTIVA',
+    pipBadgeQueue: '◷ COLA',
+    pipBadgeDone: '✓ LISTA',
+    pipBadgeFailed: '✕ FALLÓ',
+    openPageTitle: 'Abrir Radar en vista completa (/radar)',
+    expandPanelTitle: 'Expandir en el panel lateral',
+    sidePanelBtn: '⤢ Panel lateral',
+    sidePanelTitle: 'Mostrar también en el panel lateral derecho',
+    searchPlaceholder: 'Filtrar por sesión, herramienta, perfil, modelo o rama…',
+    searchAria: 'buscar sesiones',
+    settings: 'Ajustes',
+    profilesLabel: 'Perfiles',
+    profilesAll: 'Todos',
+    profilesCurrent: 'Solo el actual',
+    windowLabel: 'Ventana',
+    showFinishedLabel: 'Mostrar terminadas',
+    yes: 'sí',
+    no: 'no',
+    densityLabel: 'Densidad',
+    densityCompact: 'compacta',
+    densityComfortable: 'cómoda',
+    langLabel: 'Idioma',
+    windowPrefix: 'ventana ',
+    squadAll: 'Todos los bots',
+    cmdOpenLabel: 'Radar: Abrir vista completa',
+    cmdPipLabel: 'Radar: Siempre encima (Picture-in-Picture)'
+  },
+  en: {
+    working: 'Working',
+    workingLower: 'working',
+    waiting: 'Waiting',
+    waitingShort: 'Waiting',
+    waitingLower: 'waiting',
+    waitBadge: 'waiting',
+    stalled: 'Stalled',
+    stalledOne: 'stalled',
+    stalledLower: 'stalled',
+    finished: 'Finished',
+    all: 'All',
+    problem: 'Problem',
+    runningLabel: 'running',
+    queuedLabel: 'queued',
+    doneLabel: 'done',
+    failedLabel: 'failed',
+    noHeartbeat: 'no heartbeat for ',
+    waitingSlot: 'waiting for slot',
+    waitingUser: 'waiting for user',
+    stop: 'stop',
+    confirmStop: 'sure?',
+    interrupted: 'interrupted',
+    interruptAria: 'interrupt ',
+    copy: 'copy',
+    copied: 'copied',
+    copyAria: 'copy id of ',
+    emptyWindow: 'No sessions in window',
+    emptyWindowPip: 'No active sessions in window',
+    dormantCount: ' dormant',
+    dormantOutsidePip: ' dormant outside window',
+    expand24h: 'View last 24h',
+    offline: 'offline',
+    agoPrefix: '',
+    agoSuffix: 's ago',
+    sizeAria: 'size ',
+    pipTitle: 'Always on Top (Picture-in-Picture when minimized)',
+    pipFullTitle: 'Keep mini-window always on top even when Hermes is minimized',
+    pipButton: '📌 Always on Top',
+    pipButtonActive: '📌 Always on Top (active)',
+    pipHeader: 'Radar · Always on Top',
+    pipLive: ' live',
+    pipFooterHint: 'Minimize Hermes and this window stays visible',
+    pipBadgeStalled: '! STALLED',
+    pipBadgeWait: 'WAITING',
+    pipBadgeActive: '● ACTIVE',
+    pipBadgeQueue: '◷ QUEUED',
+    pipBadgeDone: '✓ DONE',
+    pipBadgeFailed: '✕ FAILED',
+    openPageTitle: 'Open Radar full view (/radar)',
+    expandPanelTitle: 'Expand in side panel',
+    sidePanelBtn: '⤢ Side panel',
+    sidePanelTitle: 'Also show in right side panel',
+    searchPlaceholder: 'Filter by session, tool, profile, model or branch…',
+    searchAria: 'search sessions',
+    settings: 'Settings',
+    profilesLabel: 'Profiles',
+    profilesAll: 'All',
+    profilesCurrent: 'Current only',
+    windowLabel: 'Window',
+    showFinishedLabel: 'Show finished',
+    yes: 'yes',
+    no: 'no',
+    densityLabel: 'Density',
+    densityCompact: 'compact',
+    densityComfortable: 'comfortable',
+    langLabel: 'Language',
+    windowPrefix: 'window ',
+    squadAll: 'All bots',
+    cmdOpenLabel: 'Radar: Open full view',
+    cmdPipLabel: 'Radar: Always on Top (Picture-in-Picture)'
+  }
+}
+
+let currentLang = 'es'
+const LANG_LISTENERS = new Set()
+
+function normalizeLang(value) {
+  const code = String(value || '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 2)
+  return LOCALES[code] ? code : 'es'
+}
+
+/**
+ * Register a new language pack at runtime or extend an existing one.
+ * Makes adding new languages trivial without touching component logic.
+ */
+function registerRadarLocale(code, strings) {
+  const key = String(code || '')
+    .trim()
+    .toLowerCase()
+    .slice(0, 2)
+  if (!key || !strings || typeof strings !== 'object') return false
+  LOCALES[key] = { ...(LOCALES.en || LOCALES.es), ...(LOCALES[key] || {}), ...strings }
+  return true
+}
+
+function getRadarLang(ctx) {
+  try {
+    const raw = storageFor(ctx).get(SETTING_KEYS.lang, null)
+    if (typeof raw === 'string' && LOCALES[normalizeLang(raw)]) {
+      currentLang = normalizeLang(raw)
+      return currentLang
+    }
+  } catch (_error) {
+    // Ignore storage read errors and fall back to currentLang
+  }
+  return currentLang
+}
+
+function setRadarLang(ctx, nextLang) {
+  const norm = normalizeLang(nextLang)
+  currentLang = norm
+  writeSetting(ctx, SETTING_KEYS.lang, norm)
+  for (const listener of LANG_LISTENERS) {
+    try {
+      listener(norm)
+    } catch (_error) {
+      // Listener errors must not break language switch
+    }
+  }
+  if (PIP_STATE.canvas && isRadarPipActive()) {
+    renderRadarPipCanvas(PIP_STATE.canvas, PIP_STATE.lastSnapshot || {}, Date.now())
+  }
+  return norm
+}
+
+function cycleRadarLang(ctx) {
+  const codes = Object.keys(LOCALES)
+  const active = getRadarLang(ctx)
+  const idx = codes.indexOf(active)
+  const next = codes[(idx + 1) % codes.length] || 'es'
+  return setRadarLang(ctx, next)
+}
+
+function subscribeRadarLang(listener) {
+  if (typeof listener !== 'function') return () => {}
+  LANG_LISTENERS.add(listener)
+  return () => {
+    LANG_LISTENERS.delete(listener)
+  }
+}
+
+function t(key, lang = currentLang) {
+  const pack = LOCALES[lang] || LOCALES.es
+  return pack[key] !== undefined ? pack[key] : LOCALES.es[key] || key
+}
+
+function fmtTokens(value) {
+  const n = Number(value) || 0
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M'
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
+  return String(n)
+}
 
 // Floating pane sizes. There is no free resize in the Desktop, but the pane
 // registry replaces a contribution by id, so registering `radar` again with
@@ -267,17 +502,17 @@ function livePathFor(settings) {
 }
 
 const PANEL_GROUPS = [
-  { key: 'working', label: 'Trabajando', states: ['running', 'queued'] },
-  { key: 'waiting', label: 'Esperando', states: ['idle'] },
-  { key: 'stalled', label: 'Colgadas', states: ['stalled'] },
-  { key: 'finished', label: 'Terminadas', states: ['done', 'failed'] }
+  { key: 'working', labelKey: 'working', states: ['running', 'queued'] },
+  { key: 'waiting', labelKey: 'waiting', states: ['idle'] },
+  { key: 'stalled', labelKey: 'stalled', states: ['stalled'] },
+  { key: 'finished', labelKey: 'finished', states: ['done', 'failed'] }
 ]
 
 const PANEL_FILTERS = [
-  { key: 'all', label: 'Todas' },
-  { key: 'working', label: 'Trabajando' },
-  { key: 'waiting', label: 'Esperan' },
-  { key: 'problem', label: 'Problema' }
+  { key: 'all', labelKey: 'all' },
+  { key: 'working', labelKey: 'working' },
+  { key: 'waiting', labelKey: 'waitingShort' },
+  { key: 'problem', labelKey: 'problem' }
 ]
 
 /** Group rows for the side panel; terminal rows obey the `finished` setting. */
@@ -285,11 +520,12 @@ function panelGroups(sessions, settings) {
   const list = Array.isArray(sessions) ? sessions : []
   const source = settings && typeof settings === 'object' ? settings : {}
   const showFinished = source.finished !== false
+  const lang = source.lang || currentLang
   // Every configured group keeps its header and count, even at zero: the panel
   // is a map of the whole session state, not only the non-empty slice.
   return PANEL_GROUPS.filter(def => showFinished || def.key !== 'finished').map(def => ({
     key: def.key,
-    label: def.label,
+    label: t(def.labelKey, lang),
     states: def.states,
     items: list.filter(session => def.states.includes(session.state))
   }))
@@ -637,7 +873,7 @@ function fmtAgo(ts, now = Date.now()) {
 function StateGlyph({ state }) {
   if (state === 'running') {
     return jsx('span', {
-      'aria-label': 'corriendo',
+      'aria-label': t('runningLabel'),
       style: {
         display: 'inline-flex',
         alignItems: 'center',
@@ -654,14 +890,14 @@ function StateGlyph({ state }) {
 
   const meta =
     state === 'stalled'
-      ? { glyph: '!', color: DESTRUCTIVE, label: 'colgada' }
+      ? { glyph: '!', color: DESTRUCTIVE, label: t('stalledOne') }
       : state === 'queued'
-        ? { glyph: '◷', color: AMBER, label: 'en cola' }
+        ? { glyph: '◷', color: AMBER, label: t('queuedLabel') }
         : state === 'done'
-          ? { glyph: '✓', color: GREEN, label: 'terminada' }
+          ? { glyph: '✓', color: GREEN, label: t('doneLabel') }
           : state === 'failed'
-            ? { glyph: '✕', color: DESTRUCTIVE, label: 'fallida' }
-            : { glyph: '●', color: DOT, label: 'espera' }
+            ? { glyph: '✕', color: DESTRUCTIVE, label: t('failedLabel') }
+            : { glyph: '●', color: DOT, label: t('waitBadge') }
 
   return jsx('span', {
     'aria-label': meta.label,
@@ -798,11 +1034,11 @@ function activityFor(session, now = Date.now()) {
   if (session.state === 'stalled') {
     // "sin latido" alone does not answer the only question that matters before
     // interrupting: how long has it been silent?
-    return { text: 'sin latido hace ' + fmtAgo(session.last_activity_at, now), warn: true }
+    return { text: t('noHeartbeat') + fmtAgo(session.last_activity_at, now), warn: true }
   }
   if (session.activity && session.activity !== session.tool) return { text: session.activity, warn: false }
-  if (session.state === 'queued') return { text: 'esperando slot', warn: false }
-  if (session.state === 'idle') return { text: 'esperando al usuario', warn: false }
+  if (session.state === 'queued') return { text: t('waitingSlot'), warn: false }
+  if (session.state === 'idle') return { text: t('waitingUser'), warn: false }
   return { text: '', warn: false }
 }
 
@@ -922,13 +1158,13 @@ function renderRadarPipCanvas(canvas, snapshot, now = Date.now()) {
 
   g.fillStyle = '#e6edf3'
   g.font = '700 16px system-ui, sans-serif'
-  g.fillText('Radar · Siempre encima', 54, 33)
+  g.fillText(t('pipHeader'), 54, 33)
 
   const statusText = stalledCount
-    ? '! ' + stalledCount + (stalledCount === 1 ? ' colgada' : ' colgadas')
+    ? '! ' + stalledCount + ' ' + (stalledCount === 1 ? t('stalledOne') : t('stalledLower'))
     : waitingCount
-      ? '● ' + waitingCount + ' esperando'
-      : '● ' + workingCount + ' en vivo'
+      ? '● ' + waitingCount + ' ' + t('waitingLower')
+      : '● ' + workingCount + t('pipLive')
   const statusBg = stalledCount ? '#3d1518' : waitingCount ? '#382a10' : '#122d1f'
   const statusFg = stalledCount ? '#f85149' : waitingCount ? AMBER_HUE : GREEN_HUE
   fillRoundedRect(g, PIP_WIDTH - 166, 15, 150, 26, 13, statusBg, statusFg)
@@ -938,9 +1174,9 @@ function renderRadarPipCanvas(canvas, snapshot, now = Date.now()) {
 
   // Three metric counters
   const cards = [
-    { label: 'TRABAJANDO', value: String(workingCount), color: workingCount ? GREEN_HUE : '#e6edf3' },
-    { label: 'ESPERANDO', value: String(waitingCount), color: waitingCount ? AMBER_HUE : '#9aa4af' },
-    { label: 'COLGADAS', value: String(stalledCount), color: stalledCount ? '#f85149' : '#9aa4af' }
+    { label: t('working').toUpperCase(), value: String(workingCount), color: workingCount ? GREEN_HUE : '#e6edf3' },
+    { label: t('waiting').toUpperCase(), value: String(waitingCount), color: waitingCount ? AMBER_HUE : '#9aa4af' },
+    { label: t('stalled').toUpperCase(), value: String(stalledCount), color: stalledCount ? '#f85149' : '#9aa4af' }
   ]
   const cardW = 222
   cards.forEach((card, index) => {
@@ -960,10 +1196,10 @@ function renderRadarPipCanvas(canvas, snapshot, now = Date.now()) {
     fillRoundedRect(g, 16, 114, PIP_WIDTH - 32, 294, 10, '#161b22', '#21262d')
     g.fillStyle = '#e6edf3'
     g.font = '600 16px system-ui, sans-serif'
-    g.fillText('Ninguna sesión activa en la ventana', 215, 252)
+    g.fillText(t('emptyWindowPip'), 215, 252)
     g.fillStyle = '#9aa4af'
     g.font = '500 13px ui-monospace, monospace'
-    g.fillText((totals.dormant || 0) + ' inactivas fuera de la ventana', 248, 278)
+    g.fillText((totals.dormant || 0) + t('dormantOutsidePip'), 248, 278)
   } else {
     visibleRows.forEach((session, idx) => {
       const y = 114 + idx * 59
@@ -1026,16 +1262,16 @@ function renderRadarPipCanvas(canvas, snapshot, now = Date.now()) {
 
       // Right state badge + age
       const badgeLabel = stalled
-        ? '! COLGADA'
+        ? t('pipBadgeStalled')
         : waiting
-          ? 'ESPERA'
+          ? t('pipBadgeWait')
           : running
-            ? '● ACTIVA'
+            ? t('pipBadgeActive')
             : session.state === 'queued'
-              ? '◷ COLA'
+              ? t('pipBadgeQueue')
               : session.state === 'done'
-                ? '✓ LISTA'
-                : '✕ FALLÓ'
+                ? t('pipBadgeDone')
+                : t('pipBadgeFailed')
       const badgeColor = stalled
         ? '#f85149'
         : waiting || session.state === 'queued'
@@ -1061,11 +1297,11 @@ function renderRadarPipCanvas(canvas, snapshot, now = Date.now()) {
   g.fillStyle = '#7d8590'
   g.font = '500 11px ui-monospace, monospace'
   g.fillText(
-    'Ventana ' + (data.window_s || 180) + 's · Minimiza Hermes y esta ventana seguirá siempre visible',
+    t('windowLabel') + ' ' + (data.window_s || 180) + 's · ' + t('pipFooterHint'),
     16,
     436
   )
-  g.fillText('hace ' + age + 's', PIP_WIDTH - 78, 436)
+  g.fillText(t('agoPrefix') + age + t('agoSuffix'), PIP_WIDTH - 78, 436)
 
   return {
     workingCount,
@@ -1231,7 +1467,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
         ? 'color-mix(in srgb, ' + AMBER + ' 18%, transparent)'
         : 'color-mix(in srgb, ' + FG + ' 7%, transparent)'
 
-  const stopLabel = sending ? '…' : confirming ? '¿seguro?' : 'parar'
+  const stopLabel = sending ? '…' : confirming ? t('confirmStop') : t('stop')
 
   return jsxs('div', {
     className: 'sp-row',
@@ -1304,7 +1540,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
                           lineHeight: '1.4',
                           whiteSpace: 'nowrap'
                         },
-                        children: 'espera'
+                        children: t('waitBadge')
                       })
                     : null,
                   // The bot's title, never the raw slug. It sits after the
@@ -1346,7 +1582,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
                 : stopDone
                   ? jsx('div', {
                       style: { marginTop: '2px', fontFamily: MONO, fontSize: '9px', color: GREEN },
-                      children: 'interrumpida'
+                      children: t('interrupted')
                     })
                   : jsxs('div', {
                       style: {
@@ -1386,7 +1622,7 @@ function SessionRow({ session, now, stop, onOpen, onStop, ctx }) {
         ? jsx('button', {
             type: 'button',
             className: 'sp-stop',
-            'aria-label': 'interrumpir ' + (session.title || session.id),
+            'aria-label': t('interruptAria') + (session.title || session.id),
             disabled: sending,
             onClick: event => {
               event.stopPropagation()
@@ -1422,6 +1658,7 @@ function RadarPane({ ctx }) {
   const [stopping, setStopping] = useState({})
   const [size, setSize] = useState(() => storedSize(ctx))
   const [pipActive, setPipActive] = useState(() => isRadarPipActive())
+  const [lang, setLang] = useState(() => getRadarLang(ctx))
   const mounted = useRef(true)
   const debounce = useRef(0)
 
@@ -1448,6 +1685,9 @@ function RadarPane({ ctx }) {
     const offPip = subscribeRadarPip(active => {
       if (mounted.current) setPipActive(active)
     })
+    const offLang = subscribeRadarLang(nextLang => {
+      if (mounted.current) setLang(nextLang)
+    })
     const off = host.onEvent('plugin.radar.changed', () => {
       if (debounce.current) clearTimeout(debounce.current)
       debounce.current = setTimeout(() => {
@@ -1460,6 +1700,7 @@ function RadarPane({ ctx }) {
       clearInterval(interval)
       if (debounce.current) clearTimeout(debounce.current)
       if (typeof offPip === 'function') offPip()
+      if (typeof offLang === 'function') offLang()
       if (typeof off === 'function') off()
     }
   }, [load])
@@ -1585,7 +1826,7 @@ function RadarPane({ ctx }) {
                 className: 'sp-size' + (key === size ? ' sp-size-on' : ''),
                 'data-size': key,
                 'aria-pressed': key === size ? 'true' : 'false',
-                'aria-label': 'tamaño ' + key.toUpperCase(),
+                'aria-label': t('sizeAria', lang) + key.toUpperCase(),
                 title: PANE_SIZES[key].width + ' × ' + PANE_SIZES[key].height,
                 onClick: () => chooseSize(key),
                 children: key.toUpperCase(),
@@ -1613,10 +1854,38 @@ function RadarPane({ ctx }) {
             'button',
             {
               type: 'button',
+              className: 'sp-lang',
+              'aria-label': t('langLabel', lang),
+              title: t('langLabel', lang) + ': ' + lang.toUpperCase(),
+              onClick: () => {
+                setLang(cycleRadarLang(ctx))
+              },
+              children: lang.toUpperCase(),
+              style: {
+                appearance: 'none',
+                height: '16px',
+                padding: '0 4px',
+                border: '1px solid ' + BORDER,
+                borderRadius: '4px',
+                background: 'transparent',
+                color: MUTED,
+                fontFamily: MONO,
+                fontSize: '9px',
+                fontWeight: 600,
+                lineHeight: 1,
+                cursor: 'pointer'
+              }
+            },
+            'lang'
+          ),
+          jsx(
+            'button',
+            {
+              type: 'button',
               className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
               'aria-pressed': pipActive ? 'true' : 'false',
               'aria-label': 'siempre encima',
-              title: 'Siempre encima (Picture-in-Picture al minimizar)',
+              title: t('pipTitle', lang),
               onClick: () => {
                 toggleRadarPip(ctx, snapshot)
               },
@@ -1645,7 +1914,7 @@ function RadarPane({ ctx }) {
                   type: 'button',
                   className: 'sp-page',
                   'aria-label': 'abrir vista completa',
-                  title: 'Abrir Radar en vista completa (/radar)',
+                  title: t('openPageTitle', lang),
                   onClick: openRadarPage,
                   children: '⊞',
                   style: {
@@ -1672,7 +1941,7 @@ function RadarPane({ ctx }) {
                   type: 'button',
                   className: 'sp-expand',
                   'aria-label': 'expandir panel lateral',
-                  title: 'Expandir en el panel lateral',
+                  title: t('expandPanelTitle', lang),
                   onClick: expandRadarPanel,
                   children: '⤢',
                   style: {
@@ -1724,10 +1993,10 @@ function RadarPane({ ctx }) {
               padding: '10px'
             },
             children: [
-              jsx('span', { style: { fontSize: '11.5px', fontWeight: 600 }, children: 'Ninguna sesión en la ventana' }),
+              jsx('span', { style: { fontSize: '11.5px', fontWeight: 600 }, children: t('emptyWindow', lang) }),
               jsx('span', {
                 style: { fontFamily: MONO, fontSize: '9.5px', color: MUTED },
-                children: dormant + ' inactivas'
+                children: dormant + t('dormantCount', lang)
               })
             ]
           }),
@@ -1764,14 +2033,14 @@ function RadarPane({ ctx }) {
                 }
               }),
               jsx('b', { style: { color: FG, fontWeight: 600 }, children: String(workingCount) }),
-              ' trabajando · ',
+              ' ' + t('workingLower', lang) + ' · ',
               jsx('b', { style: { color: waitingCount ? AMBER : FG, fontWeight: 600 }, children: String(waitingCount) }),
-              ' esperando · ',
+              ' ' + t('waitingLower', lang) + ' · ',
               jsx('b', {
                 style: { color: stalledCount ? WARN : FG, fontWeight: 600 },
                 children: String(stalledCount)
               }),
-              ' colgadas'
+              ' ' + t('stalledLower', lang)
             ]
           }),
           profileErrors.length
@@ -1787,13 +2056,13 @@ function RadarPane({ ctx }) {
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap'
                 },
-                children: 'sin conexión · ' + profileErrors.join(', ')
+                children: t('offline', lang) + ' · ' + profileErrors.join(', ')
               })
             : null,
           jsx('span', { style: { flex: 1 } }),
           jsx('span', {
             style: { flex: '0 0 auto', whiteSpace: 'nowrap', color: offline ? WARN : undefined },
-            children: offline ? 'sin conexión' : 'hace ' + age + 's'
+            children: offline ? t('offline', lang) : t('agoPrefix', lang) + age + t('agoSuffix', lang)
           })
         ]
       })
@@ -1837,7 +2106,15 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
       ? 'color-mix(in srgb, ' + DESTRUCTIVE + ' 15%, transparent)'
       : 'color-mix(in srgb, ' + FG + ' 7%, transparent)'
 
-  const stopLabel = sending ? '…' : confirming ? '¿seguro?' : 'parar'
+  const stopLabel = sending ? '…' : confirming ? t('confirmStop') : t('stop')
+  const totalTok = (Number(session.tokens_in) || 0) + (Number(session.tokens_out) || 0)
+  const metaParts = []
+  if (Number(session.delegating) > 0) metaParts.push('⑂ ' + session.delegating + ' sub')
+  if (Number(session.tools) > 0) metaParts.push('⚙ ' + session.tools)
+  if (totalTok > 0) {
+    metaParts.push('↑' + fmtTokens(session.tokens_in) + ' ↓' + fmtTokens(session.tokens_out))
+  }
+  if (session.git_branch) metaParts.push('⎇ ' + session.git_branch)
 
   return jsxs('div', {
     className: 'sp-row sp-panel-row',
@@ -1902,7 +2179,7 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
                           lineHeight: '1.4',
                           whiteSpace: 'nowrap'
                         },
-                        children: 'espera'
+                        children: t('waitBadge')
                       })
                     : null,
                   jsx('span', {
@@ -1934,8 +2211,8 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
                   })
                 : stopDone
                   ? jsx('div', {
-                      style: { marginTop: '2px', fontFamily: MONO, fontSize: '9px', color: GREEN },
-                      children: 'interrumpida'
+                       style: { marginTop: '2px', fontFamily: MONO, fontSize: '9px', color: GREEN },
+                      children: t('interrupted')
                     })
                   : jsxs('div', {
                       style: {
@@ -1968,7 +2245,22 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
                             })
                           : null
                       ]
-                    })
+                    }),
+              !compact && metaParts.length
+                ? jsx('div', {
+                    className: 'sp-telemetry',
+                    style: {
+                      marginTop: '2px',
+                      fontFamily: MONO,
+                      fontSize: '8.5px',
+                      color: MUTED,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis'
+                    },
+                    children: metaParts.join(' · ')
+                  })
+                : null
             ]
           })
         ]
@@ -1988,7 +2280,7 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
         ? jsx('button', {
             type: 'button',
             className: 'sp-stop',
-            'aria-label': 'interrumpir ' + (session.title || session.id),
+            'aria-label': t('interruptAria') + (session.title || session.id),
             disabled: sending,
             onClick: event => {
               event.stopPropagation()
@@ -2013,7 +2305,7 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
         : null,
       jsx('button', {
         type: 'button',
-        'aria-label': 'copiar id de ' + (session.title || session.id),
+        'aria-label': t('copyAria') + (session.title || session.id),
         onClick: event => {
           event.stopPropagation()
           onCopy(session)
@@ -2032,7 +2324,7 @@ function PanelRow({ session, now, compact, stop, copied, onOpen, onStop, onCopy,
           padding: '1px 4px',
           cursor: 'pointer'
         },
-        children: copied ? 'copiado' : 'copiar'
+        children: copied ? t('copied') : t('copy')
       })
     ]
   })
@@ -2054,6 +2346,8 @@ function RadarPanel({ ctx, fullPage = false }) {
   const [copied, setCopied] = useState({})
   const [pipActive, setPipActive] = useState(() => isRadarPipActive())
   const [query, setQuery] = useState('')
+  const [lang, setLang] = useState(() => getRadarLang(ctx))
+  const [botFilter, setBotFilter] = useState('all')
   const mounted = useRef(true)
   const debounce = useRef(0)
   const settingsRef = useRef(settings)
@@ -2088,7 +2382,8 @@ function RadarPanel({ ctx, fullPage = false }) {
       readSetting(ctx, SETTING_KEYS.profiles, DEFAULT_SETTINGS.profiles),
       readSetting(ctx, SETTING_KEYS.window, DEFAULT_SETTINGS.window),
       readSetting(ctx, SETTING_KEYS.finished, DEFAULT_SETTINGS.finished),
-      readSetting(ctx, SETTING_KEYS.density, DEFAULT_SETTINGS.density)
+      readSetting(ctx, SETTING_KEYS.density, DEFAULT_SETTINGS.density),
+      readSetting(ctx, SETTING_KEYS.lang, currentLang)
     ]).then(values => {
       if (!alive) return
       const next = {
@@ -2097,6 +2392,10 @@ function RadarPanel({ ctx, fullPage = false }) {
         window: WINDOW_CHOICES.includes(Number(values[2])) ? Number(values[2]) : 180,
         finished: values[3] !== false && values[3] !== 'false',
         density: values[4] === 'compact' ? 'compact' : 'comfortable'
+      }
+      if (values[5] && LOCALES[normalizeLang(values[5])]) {
+        currentLang = normalizeLang(values[5])
+        setLang(currentLang)
       }
       settingsRef.current = next
       setSettings(next)
@@ -2107,6 +2406,9 @@ function RadarPanel({ ctx, fullPage = false }) {
     const interval = setInterval(load, REFRESH_MS)
     const offPip = subscribeRadarPip(active => {
       if (mounted.current) setPipActive(active)
+    })
+    const offLang = subscribeRadarLang(nextLang => {
+      if (mounted.current) setLang(nextLang)
     })
     const off = host.onEvent('plugin.radar.changed', () => {
       if (debounce.current) clearTimeout(debounce.current)
@@ -2121,6 +2423,7 @@ function RadarPanel({ ctx, fullPage = false }) {
       clearInterval(interval)
       if (debounce.current) clearTimeout(debounce.current)
       if (typeof offPip === 'function') offPip()
+      if (typeof offLang === 'function') offLang()
       if (typeof off === 'function') off()
     }
   }, [ctx, load])
@@ -2210,15 +2513,47 @@ function RadarPanel({ ctx, fullPage = false }) {
   const waitingCount = totals.waiting !== undefined ? totals.waiting : totals.idle || 0
   const stalledCount = totals.stalled || 0
 
+  // Aggregate telemetry across active window sessions
+  let totalTokensIn = 0
+  let totalTokensOut = 0
+  let totalTools = 0
+  const botMap = new Map()
+  for (const s of sessions) {
+    totalTokensIn += Number(s.tokens_in) || 0
+    totalTokensOut += Number(s.tokens_out) || 0
+    totalTools += Number(s.tools) || 0
+    const pKey = String(s.profile || 'default').trim() || 'default'
+    const entry = botMap.get(pKey) || {
+      profile: pKey,
+      title: s.profile_title || s.profile_label || pKey,
+      avatar: s.avatar,
+      count: 0,
+      working: 0,
+      waiting: 0,
+      stalled: 0
+    }
+    entry.count += 1
+    if (s.state === 'running' || s.state === 'queued') entry.working += 1
+    else if (s.state === 'idle') entry.waiting += 1
+    else if (s.state === 'stalled') entry.stalled += 1
+    botMap.set(pKey, entry)
+  }
+  const squadBots = Array.from(botMap.values())
+
+  const sessionsForBot =
+    botFilter && botFilter !== 'all'
+      ? sessions.filter(s => (String(s.profile || 'default').trim() || 'default') === botFilter)
+      : sessions
+
   const filterCounts = {
-    all: sessions.filter(
+    all: sessionsForBot.filter(
       session => settings.finished !== false || !TERMINAL_STATES.includes(session.state)
     ).length,
-    working: sessions.filter(
+    working: sessionsForBot.filter(
       session => session.state === 'running' || session.state === 'queued'
     ).length,
-    waiting: sessions.filter(session => session.state === 'idle').length,
-    problem: sessions.filter(
+    waiting: sessionsForBot.filter(session => session.state === 'idle').length,
+    problem: sessionsForBot.filter(
       session =>
         session.state === 'stalled' ||
         (session.state === 'failed' && settings.finished !== false)
@@ -2226,7 +2561,7 @@ function RadarPanel({ ctx, fullPage = false }) {
   }
   const trimmedQuery = String(query || '').trim().toLowerCase()
   const filteredByQuery = trimmedQuery
-    ? sessions.filter(session => {
+    ? sessionsForBot.filter(session => {
         const hay = [
           session.title,
           session.id,
@@ -2243,22 +2578,22 @@ function RadarPanel({ ctx, fullPage = false }) {
           .toLowerCase()
         return hay.includes(trimmedQuery)
       })
-    : sessions
+    : sessionsForBot
 
   const visible = sessionsForFilter(filteredByQuery, settings.filter)
   // Only non-empty groups are painted: the header counters already carry the
   // zero counts, and a filtered view should not spend its height on empties.
-  const groups = panelGroups(visible, settings).filter(group => group.items.length > 0)
+  const groups = panelGroups(visible, { ...settings, lang }).filter(group => group.items.length > 0)
   const shown = groups.reduce((total, group) => total + group.items.length, 0)
   const compact = settings.density === 'compact'
   const age = data.generated_at ? Math.max(0, Math.floor(now / 1000) - Number(data.generated_at)) : 0
   const profileErrors = Object.keys(data.profile_errors || {})
 
   const counters = [
-    { key: 'working', label: 'trabajando', value: workingCount, color: FG },
-    { key: 'waiting', label: 'esperando', value: waitingCount, color: waitingCount ? AMBER : MUTED },
-    // `problem` is the filter that covers stalled rows; the label stays "colgadas".
-    { key: 'problem', label: 'colgadas', value: stalledCount, color: stalledCount ? DESTRUCTIVE : MUTED }
+    { key: 'working', label: t('workingLower', lang), value: workingCount, color: FG },
+    { key: 'waiting', label: t('waitingLower', lang), value: waitingCount, color: waitingCount ? AMBER : MUTED },
+    // `problem` is the filter that covers stalled rows; the label stays "colgadas" / "stalled".
+    { key: 'problem', label: t('stalledLower', lang), value: stalledCount, color: stalledCount ? DESTRUCTIVE : MUTED }
   ]
 
   const select = (label, value, options, onChange) =>
@@ -2340,8 +2675,8 @@ function RadarPanel({ ctx, fullPage = false }) {
               jsx('input', {
                 type: 'search',
                 value: query,
-                'aria-label': 'buscar sesiones',
-                placeholder: 'Filtrar por sesión, herramienta, perfil, modelo o rama…',
+                'aria-label': t('searchAria', lang),
+                placeholder: t('searchPlaceholder', lang),
                 onChange: event => setQuery(event.target.value),
                 style: {
                   flex: '1 1 200px',
@@ -2356,13 +2691,56 @@ function RadarPanel({ ctx, fullPage = false }) {
                   fontSize: '11.5px'
                 }
               }),
+              totalTokensIn + totalTokensOut > 0 || totalTools > 0
+                ? jsx('span', {
+                    className: 'sp-agg-telemetry',
+                    style: {
+                      padding: '3px 7px',
+                      border: '1px solid ' + BORDER,
+                      borderRadius: '20px',
+                      fontFamily: MONO,
+                      fontSize: '9.5px',
+                      color: MUTED,
+                      whiteSpace: 'nowrap'
+                    },
+                    children:
+                      (totalTokensIn + totalTokensOut > 0
+                        ? '↑' + fmtTokens(totalTokensIn) + ' ↓' + fmtTokens(totalTokensOut)
+                        : '') +
+                      (totalTokensIn + totalTokensOut > 0 && totalTools > 0 ? ' · ' : '') +
+                      (totalTools > 0 ? '⚙ ' + totalTools + ' tools' : '')
+                  })
+                : null,
               jsx('span', { style: { flex: 1 } }),
+              jsx('button', {
+                type: 'button',
+                className: 'sp-lang',
+                'aria-label': t('langLabel', lang),
+                title: t('langLabel', lang) + ': ' + lang.toUpperCase(),
+                onClick: () => {
+                  setLang(cycleRadarLang(ctx))
+                },
+                style: {
+                  appearance: 'none',
+                  padding: '4px 8px',
+                  border: '1px solid ' + BORDER,
+                  borderRadius: '6px',
+                  background: 'transparent',
+                  color: FG,
+                  fontFamily: MONO,
+                  fontSize: '10px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                },
+                children: '🌐 ' + lang.toUpperCase()
+              }),
               jsx('button', {
                 type: 'button',
                 className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
                 'aria-pressed': pipActive ? 'true' : 'false',
                 'aria-label': 'siempre encima',
-                title: 'Mantener mini-ventana siempre encima aunque minimices Hermes',
+                title: t('pipFullTitle', lang),
                 onClick: () => {
                   toggleRadarPip(ctx, snapshot)
                 },
@@ -2380,14 +2758,14 @@ function RadarPanel({ ctx, fullPage = false }) {
                   cursor: 'pointer',
                   whiteSpace: 'nowrap'
                 },
-                children: pipActive ? '📌 Siempre encima (activo)' : '📌 Siempre encima'
+                children: pipActive ? t('pipButtonActive', lang) : t('pipButton', lang)
               }),
               typeof host.revealPane === 'function'
                 ? jsx('button', {
                     type: 'button',
                     className: 'sp-expand',
                     'aria-label': 'expandir panel lateral',
-                    title: 'Mostrar también en el panel lateral derecho',
+                    title: t('sidePanelTitle', lang),
                     onClick: expandRadarPanel,
                     style: {
                       appearance: 'none',
@@ -2401,7 +2779,7 @@ function RadarPanel({ ctx, fullPage = false }) {
                       cursor: 'pointer',
                       whiteSpace: 'nowrap'
                     },
-                    children: '⤢ Panel lateral'
+                    children: t('sidePanelBtn', lang)
                   })
                 : null
             ]
@@ -2451,10 +2829,36 @@ function RadarPanel({ ctx, fullPage = false }) {
           !fullPage
             ? jsx('button', {
                 type: 'button',
+                className: 'sp-lang',
+                'aria-label': t('langLabel', lang),
+                title: t('langLabel', lang) + ': ' + lang.toUpperCase(),
+                onClick: () => {
+                  setLang(cycleRadarLang(ctx))
+                },
+                style: {
+                  appearance: 'none',
+                  flex: '0 0 auto',
+                  padding: '4px 5px',
+                  border: '1px solid ' + BORDER,
+                  borderRadius: '6px',
+                  background: 'transparent',
+                  color: MUTED,
+                  fontFamily: MONO,
+                  fontSize: '9.5px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  whiteSpace: 'nowrap'
+                },
+                children: lang.toUpperCase()
+              })
+            : null,
+          !fullPage
+            ? jsx('button', {
+                type: 'button',
                 className: 'sp-pip' + (pipActive ? ' sp-pip-on' : ''),
                 'aria-pressed': pipActive ? 'true' : 'false',
                 'aria-label': 'siempre encima',
-                title: 'Siempre encima (Picture-in-Picture al minimizar)',
+                title: t('pipTitle', lang),
                 onClick: () => {
                   toggleRadarPip(ctx, snapshot)
                 },
@@ -2489,7 +2893,7 @@ function RadarPanel({ ctx, fullPage = false }) {
                   borderRadius: '6px',
                   whiteSpace: 'nowrap'
                 },
-                children: 'Ajustes'
+                children: t('settings', lang)
               }),
               jsxs('div', {
                 style: {
@@ -2509,39 +2913,48 @@ function RadarPanel({ ctx, fullPage = false }) {
                 },
                 children: [
                   select(
-                    'Perfiles',
+                    t('langLabel', lang),
+                    lang,
+                    Object.keys(LOCALES).map(code => [code, code.toUpperCase()]),
+                    value => setLang(setRadarLang(ctx, value))
+                  ),
+                  select(
+                    t('profilesLabel', lang),
                     settings.profiles,
                     [
-                      ['all', 'Todos'],
-                      ['current', 'Solo el actual']
+                      ['all', t('profilesAll', lang)],
+                      ['current', t('profilesCurrent', lang)]
                     ],
                     value => changeSetting('profiles', value)
                   ),
                   select(
-                    'Ventana',
+                    t('windowLabel', lang),
                     String(settings.window),
                     [
                       ['60', '1 min'],
                       ['180', '3 min'],
-                      ['600', '10 min']
+                      ['600', '10 min'],
+                      ['1800', '30 min'],
+                      ['3600', '1 h'],
+                      ['86400', '24 h']
                     ],
                     value => changeSetting('window', Number(value))
                   ),
                   select(
-                    'Mostrar terminadas',
+                    t('showFinishedLabel', lang),
                     settings.finished ? 'true' : 'false',
                     [
-                      ['true', 'sí'],
-                      ['false', 'no']
+                      ['true', t('yes', lang)],
+                      ['false', t('no', lang)]
                     ],
                     value => changeSetting('finished', value === 'true')
                   ),
                   select(
-                    'Densidad',
+                    t('densityLabel', lang),
                     settings.density,
                     [
-                      ['compact', 'compacta'],
-                      ['comfortable', 'cómoda']
+                      ['compact', t('densityCompact', lang)],
+                      ['comfortable', t('densityComfortable', lang)]
                     ],
                     value => changeSetting('density', value)
                   )
@@ -2551,6 +2964,105 @@ function RadarPanel({ ctx, fullPage = false }) {
           })
         ]
       }),
+      fullPage && squadBots.length > 1
+        ? jsxs('div', {
+            className: 'sp-roster',
+            style: {
+              flex: '0 0 auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              overflowX: 'auto',
+              padding: '8px 14px 4px',
+              scrollbarWidth: 'thin'
+            },
+            children: [
+              jsx(
+                'button',
+                {
+                  type: 'button',
+                  'data-bot': 'all',
+                  onClick: () => setBotFilter('all'),
+                  style: {
+                    appearance: 'none',
+                    flex: '0 0 auto',
+                    padding: '4px 8px',
+                    border: '1px solid ' + (botFilter === 'all' ? ORANGE : BORDER),
+                    borderRadius: '20px',
+                    background:
+                      botFilter === 'all'
+                        ? 'color-mix(in srgb, ' + ORANGE + ' 14%, transparent)'
+                        : 'transparent',
+                    color: botFilter === 'all' ? FG : MUTED,
+                    fontFamily: MONO,
+                    fontSize: '9.5px',
+                    fontWeight: botFilter === 'all' ? 700 : 500,
+                    cursor: 'pointer',
+                    whiteSpace: 'nowrap'
+                  },
+                  children: t('squadAll', lang) + ' (' + sessions.length + ')'
+                },
+                'all'
+              ),
+              ...squadBots.map(bot => {
+                const active = botFilter === bot.profile
+                const dotColor = bot.stalled
+                  ? DESTRUCTIVE
+                  : bot.waiting
+                    ? AMBER
+                    : bot.working
+                      ? GREEN
+                      : MUTED
+                return jsxs(
+                  'button',
+                  {
+                    type: 'button',
+                    'data-bot': bot.profile,
+                    onClick: () => setBotFilter(active ? 'all' : bot.profile),
+                    style: {
+                      appearance: 'none',
+                      flex: '0 0 auto',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '3px 9px 3px 4px',
+                      border: '1px solid ' + (active ? ORANGE : BORDER),
+                      borderRadius: '20px',
+                      background: active
+                        ? 'color-mix(in srgb, ' + ORANGE + ' 14%, transparent)'
+                        : 'transparent',
+                      color: active ? FG : MUTED,
+                      fontFamily: SANS,
+                      fontSize: '11px',
+                      fontWeight: active ? 600 : 500,
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap'
+                    },
+                    children: [
+                      jsx(Avatar, {
+                        profile: bot.profile,
+                        title: bot.title,
+                        avatar: bot.avatar,
+                        ctx
+                      }),
+                      jsx('span', { children: bot.title }),
+                      jsx('span', {
+                        style: {
+                          fontFamily: MONO,
+                          fontSize: '9.5px',
+                          color: dotColor,
+                          fontWeight: 700
+                        },
+                        children: '● ' + bot.count
+                      })
+                    ]
+                  },
+                  bot.profile
+                )
+              })
+            ]
+          })
+        : null,
       jsxs('div', {
         style: {
           flex: '0 0 auto',
@@ -2578,7 +3090,7 @@ function RadarPanel({ ctx, fullPage = false }) {
                 cursor: 'pointer',
                 whiteSpace: 'nowrap'
               },
-              children: tab.label + ' ' + (filterCounts[tab.key] || 0)
+              children: t(tab.labelKey, lang) + ' ' + (filterCounts[tab.key] || 0)
             },
             tab.key
           )
@@ -2671,16 +3183,36 @@ function RadarPanel({ ctx, fullPage = false }) {
               flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
-              gap: '3px',
+              gap: '5px',
               padding: '12px',
               textAlign: 'center'
             },
             children: [
-              jsx('span', { style: { fontSize: '11.5px', fontWeight: 600 }, children: 'Ninguna sesión en la ventana' }),
+              jsx('span', { style: { fontSize: '11.5px', fontWeight: 600 }, children: t('emptyWindow', lang) }),
               jsx('span', {
                 style: { fontFamily: MONO, fontSize: '9.5px', color: MUTED },
-                children: (totals.dormant || 0) + ' inactivas'
-              })
+                children: (totals.dormant || 0) + t('dormantCount', lang)
+              }),
+              (totals.dormant || 0) > 0 && Number(settings.window) < 86400
+                ? jsx('button', {
+                    type: 'button',
+                    className: 'sp-expand-window',
+                    onClick: () => changeSetting('window', 86400),
+                    style: {
+                      marginTop: '4px',
+                      padding: '3px 8px',
+                      border: '1px solid ' + ORANGE,
+                      borderRadius: '6px',
+                      background: 'color-mix(in srgb, ' + ORANGE + ' 14%, transparent)',
+                      color: FG,
+                      fontFamily: MONO,
+                      fontSize: '9.5px',
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    },
+                    children: t('expand24h', lang)
+                  })
+                : null
             ]
           }),
       jsxs('div', {
@@ -2700,12 +3232,12 @@ function RadarPanel({ ctx, fullPage = false }) {
           jsx('span', {
             style: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
             children: profileErrors.length
-              ? 'sin conexión · ' + profileErrors.join(', ')
-              : 'ventana ' + settings.window + ' s · ' + settings.profiles
+              ? t('offline', lang) + ' · ' + profileErrors.join(', ')
+              : t('windowPrefix', lang) + settings.window + ' s · ' + settings.profiles
           }),
           jsx('span', {
             style: offline ? { color: WARN } : undefined,
-            children: offline ? 'sin conexión' : 'hace ' + age + 's'
+            children: offline ? t('offline', lang) : t('agoPrefix', lang) + age + t('agoSuffix', lang)
           })
         ]
       })

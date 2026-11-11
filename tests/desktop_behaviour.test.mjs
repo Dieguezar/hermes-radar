@@ -77,7 +77,16 @@ const exported = [
   'SIDEBAR_NAV_AREA',
   'ROUTES_AREA',
   'PALETTE_AREA',
-  'RADAR_ROUTE'
+  'RADAR_ROUTE',
+  'LOCALES',
+  'registerRadarLocale',
+  'getRadarLang',
+  'setRadarLang',
+  'cycleRadarLang',
+  't',
+  'fmtTokens',
+  'WINDOW_CHOICES',
+  'PanelRow'
 ]
 
 const dir = mkdtempSync(join(tmpdir(), 'radar-js-'))
@@ -1139,6 +1148,135 @@ test('floating pane auto-hides when full view enters and restores when it exits'
   // When all full views exit, floating pane is re-registered
   mod.exitFullView(ctx)
   assert.equal(registered.length, 2, 'floating pane must re-register when returning to chat')
+})
+
+// ---------------------------------------------------------------------------
+// F11 — v0.8.0: Extensible i18n (EN/ES/+), Extended Windows, Squad Roster & Telemetry
+// ---------------------------------------------------------------------------
+
+test('i18n switches between Spanish and English and allows registering new locales', () => {
+  settingsStore.clear()
+  try {
+    assert.equal(mod.getRadarLang({}), 'es')
+    assert.equal(mod.t('working'), 'Trabajando')
+
+    // Switch to English
+    assert.equal(mod.setRadarLang({}, 'en'), 'en')
+    assert.equal(mod.getRadarLang({}), 'en')
+    assert.equal(mod.t('working'), 'Working')
+    assert.equal(mod.t('waiting'), 'Waiting')
+    assert.equal(mod.t('stalled'), 'Stalled')
+
+    // RadarPane renders in English when lang is 'en'
+    globalThis.__SP_STATE__ = [F9_SNAPSHOT, false, {}]
+    const paneTree = mod.RadarPane({ ctx: { rest: async () => F9_SNAPSHOT } })
+    assert.match(plainText(paneTree), /1 working · 0 waiting · 0 stalled/)
+
+    // Register a custom locale (Portuguese) dynamically
+    assert.equal(mod.registerRadarLocale('pt', { working: 'Trabalhando', workingLower: 'trabalhando' }), true)
+    assert.equal(mod.t('working', 'pt'), 'Trabalhando')
+    assert.equal(mod.t('waiting', 'pt'), 'Waiting', 'falls back to English base for missing keys')
+  } finally {
+    delete mod.LOCALES.pt
+    mod.setRadarLang({}, 'es')
+    settingsStore.clear()
+  }
+})
+
+test('extended WINDOW_CHOICES supports up to 24h (86400s) and empty state offers 1-click 24h expand', () => {
+  assert.deepEqual(mod.WINDOW_CHOICES, [60, 180, 600, 1800, 3600, 86400])
+  assert.equal(mod.livePathFor({ profiles: 'all', window: 3600 }), '/live?profiles=all&window=3600')
+  assert.equal(mod.livePathFor({ profiles: 'all', window: 86400 }), '/live?profiles=all&window=86400')
+
+  const emptyWithDormant = {
+    generated_at: NOW_S - 1,
+    profiles: ['default'],
+    window_s: 180,
+    sessions: [],
+    totals: { running: 0, working: 0, waiting: 0, stalled: 0, live: 0, dormant: 5, sessions: 0 }
+  }
+  globalThis.__SP_STATE__ = [
+    emptyWithDormant,
+    { filter: 'all', profiles: 'all', window: 180, finished: true, density: 'comfortable' },
+    false,
+    {},
+    {},
+    false,
+    ''
+  ]
+  const tree = mod.RadarPanel({ ctx: { rest: async () => emptyWithDormant } })
+  const expandBtn = walk(tree).find(node => node.props && node.props.className === 'sp-expand-window')
+  assert.ok(expandBtn, 'empty state with dormant sessions must offer a 24h expand button')
+  assert.match(plainText(expandBtn), /24 h/)
+})
+
+test('RadarPage renders the Bot Squad Roster and Telemetry pills when multiple bots and tokens exist', () => {
+  const multiBotSnapshot = {
+    generated_at: NOW_S - 1,
+    profiles: ['default', 'builder'],
+    window_s: 180,
+    sessions: [
+      freshRow({
+        id: 's1',
+        profile: 'default',
+        profile_title: 'Hermes',
+        tokens_in: 12500,
+        tokens_out: 3400,
+        tools: 8,
+        delegating: 2,
+        git_branch: 'main'
+      }),
+      freshRow({
+        id: 's2',
+        profile: 'builder',
+        profile_title: 'Builder',
+        state: 'idle',
+        can_interrupt: false,
+        tokens_in: 4000,
+        tokens_out: 1000,
+        tools: 3
+      })
+    ],
+    totals: { running: 1, idle: 1, working: 1, waiting: 1, stalled: 0, live: 1, dormant: 0, sessions: 2 }
+  }
+  globalThis.__SP_STATE__ = [
+    multiBotSnapshot,
+    { filter: 'all', profiles: 'all', window: 180, finished: true, density: 'comfortable' },
+    false,
+    {},
+    {},
+    false,
+    ''
+  ]
+  const tree = mod.RadarPage({ ctx: { rest: async () => multiBotSnapshot } })
+  const nodes = walk(tree)
+  const roster = nodes.find(node => node.props && node.props.className === 'sp-roster')
+  assert.ok(roster, 'fullPage renders the Bot Squad Roster when multiple bots are active')
+  assert.match(plainText(roster), /Hermes/)
+  assert.match(plainText(roster), /Builder/)
+
+  const aggTel = nodes.find(node => node.props && node.props.className === 'sp-agg-telemetry')
+  assert.ok(aggTel, 'fullPage header renders aggregate token and tool telemetry')
+  assert.match(plainText(aggTel), /16\.5k/)
+  assert.match(plainText(aggTel), /11 tools/)
+
+  const rowTree = mod.PanelRow({
+    session: multiBotSnapshot.sessions[0],
+    now: NOW_MS,
+    compact: false,
+    stop: undefined,
+    copied: false,
+    onOpen: () => {},
+    onStop: () => {},
+    onCopy: () => {},
+    ctx: {}
+  })
+  const rowTel = walk(rowTree).find(node => node.props && node.props.className === 'sp-telemetry')
+  assert.ok(rowTel, 'PanelRow renders per-session telemetry chips')
+  assert.match(plainText(rowTel), /⑂ 2 sub/)
+  assert.match(plainText(rowTel), /⚙ 8/)
+  assert.match(plainText(rowTel), /↑12\.5k ↓3\.4k/)
+  assert.match(plainText(rowTel), /⎇ main/)
 })
 
 // ---------------------------------------------------------------------------
